@@ -23,12 +23,12 @@ const (
 )
 
 const (
-	MaxTryTimes = 10
+	MaxTryTimes = 17280 // max time to retry is up to 1 day
+	TryDelay    = 5 * time.Second
 )
 
 var (
-	ErrAuthenticationIsRequired = errors.New("authentication is required")
-	ErrNotConnected             = errors.New("not connected")
+	ErrNotConnected = errors.New("not connected")
 )
 
 // Event is wrapper of received event
@@ -152,7 +152,7 @@ func (c *Client) start() error {
 	for i := 0; i < MaxTryTimes; i++ {
 		conn, _, err = ws.DefaultDialer.Dial(c.addr, nil)
 		if err != nil {
-			time.Sleep(time.Duration(i+1) * time.Second)
+			time.Sleep(TryDelay)
 			continue
 		}
 		c.conn = conn
@@ -166,23 +166,17 @@ func (c *Client) start() error {
 
 	c.setIsConnected(true)
 
-	// auth
-	if c.apiKey != "" && c.secretKey != "" {
-		if _, err := c.Auth(context.Background()); err != nil {
-			log.Printf("failed to auth, err = %s", err)
-			return err
-		}
-	}
-
 	// subscribe
 	c.subscribe(c.subscriptions)
 
-	if _, err := c.SetHeartbeat(context.Background(), &models.SetHeartbeatParams{Interval: 30}); err != nil {
-		return err
-	}
-
 	if c.autoReconnect {
 		go c.reconnect()
+	}
+
+	if _, err := c.SetHeartbeat(context.Background(), &models.SetHeartbeatParams{Interval: 30}); err != nil {
+		log.Printf("cannot set heartbeat, err=%s", err)
+		c.CloseWSConnectioin()
+		return nil
 	}
 
 	go c.heartbeat()
@@ -228,7 +222,7 @@ func (c *Client) heartbeat() {
 		case <-t.C:
 			if _, err := c.Test(context.Background()); err != nil {
 				log.Printf("error test server, err = %s", err)
-				_ = c.conn.Close() // close server
+				c.CloseWSConnectioin()
 			}
 		case <-c.heartCancel:
 			return
@@ -248,4 +242,8 @@ func (c *Client) reconnect() {
 	time.Sleep(1 * time.Second)
 
 	_ = c.start()
+}
+
+func (c *Client) CloseWSConnectioin() {
+	_ = c.conn.Close()
 }
