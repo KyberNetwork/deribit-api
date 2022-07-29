@@ -40,13 +40,12 @@ type Event struct {
 
 // Client represents a client for Deribit multicast.
 type Client struct {
-	log           *zap.SugaredLogger
-	mu            sync.RWMutex
-	inf           *net.Interface
-	addrs         []string
-	addrConnMap   map[string]*net.UDPConn
-	wsClient      *websocket.Client
-	restartConnCh chan struct{}
+	log         *zap.SugaredLogger
+	mu          sync.RWMutex
+	inf         *net.Interface
+	addrs       []string
+	addrConnMap map[string]*net.UDPConn
+	wsClient    *websocket.Client
 
 	supportCurrencies []string
 	instrumentsMap    map[uint32]models.Instrument
@@ -68,13 +67,12 @@ func NewClient(ifname string, addrs []string, wsClient *websocket.Client, curren
 	}
 
 	client = &Client{
-		log:           l,
-		mu:            sync.RWMutex{},
-		inf:           inf,
-		addrs:         addrs,
-		wsClient:      wsClient,
-		addrConnMap:   make(map[string]*net.UDPConn),
-		restartConnCh: make(chan struct{}),
+		log:         l,
+		mu:          sync.RWMutex{},
+		inf:         inf,
+		addrs:       addrs,
+		wsClient:    wsClient,
+		addrConnMap: make(map[string]*net.UDPConn),
 
 		supportCurrencies: currencies,
 		instrumentsMap:    make(map[uint32]models.Instrument),
@@ -300,16 +298,6 @@ func (c *Client) Start(ctx context.Context) error {
 		return err
 	}
 
-	go func() {
-		for {
-			<-c.restartConnCh
-			err := c.restartConnections(ctx)
-			if err != nil {
-				c.log.Error("failed to restart connections")
-			}
-		}
-	}()
-
 	return c.ListenToEvents(ctx)
 }
 
@@ -320,30 +308,21 @@ func (c *Client) closeConnection(addr string) error {
 		c.log.Errorw("failed to close connection", "err", err)
 		return err
 	}
+	c.delConnection(addr)
 	return nil
 }
 
 // restartConnection should re-build instrumentMap.
 func (c *Client) restartConnections(ctx context.Context) error {
-	err := c.buildInstrumentsMapping()
-	if err != nil {
-		c.log.Errorw("failed to build instruments mapping", "err", err)
-		return err
-	}
-
 	c.mu.Lock()
 	c.channelIDSeqNum = make(map[uint16]uint32)
 	c.mu.Unlock()
 
-	for addr, conn := range c.addrConnMap {
-		err := conn.Close()
-		if err != nil {
-			c.log.Errorw("failed to close connection", "addr", addr, "err", err)
-			return err
-		}
-		go c.ListenToEventsForAddress(ctx, addr)
+	err := c.Stop()
+	if err != nil {
+		return err
 	}
-	return nil
+	return c.Start(ctx)
 }
 
 // Stop stops listening for events.
@@ -404,10 +383,7 @@ func (c *Client) handlePackageHeader(r io.Reader) error {
 	}
 
 	lastSeq, ok := c.getSeqNum(channelID)
-	if !ok {
-		c.setSeqNum(channelID, seq)
-		return nil
-	} else if seq != lastSeq+1 { // check for invalid sequence number
+	if ok && seq != lastSeq+1 { // check for invalid sequence number
 		if seq == 0 {
 			return ErrConnectionReset
 		}
@@ -485,6 +461,13 @@ func (c *Client) setConnection(addr string, conn *net.UDPConn) {
 	c.addrConnMap[addr] = conn
 }
 
+func (c *Client) delConnection(addr string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	delete(c.addrConnMap, addr)
+}
+
 func (c *Client) listenToMulticastUDP(addr string) (*net.UDPConn, error) {
 	udpAddr, err := net.ResolveUDPAddr("udp", addr)
 	if err != nil {
@@ -512,7 +495,6 @@ func (c *Client) listenToMulticastUDP(addr string) (*net.UDPConn, error) {
 func (c *Client) ListenToEventsForAddress(ctx context.Context, addr string) error {
 	l := c.log.With("addr", addr)
 	dataCh := make(chan []byte, defaultDataChSize)
-	closeCh := make(chan struct{})
 	udpConn, err := c.listenToMulticastUDP(addr)
 	if err != nil {
 		l.Errorw("failed to listen to multicast UDP", "err", err)
@@ -526,19 +508,22 @@ func (c *Client) ListenToEventsForAddress(ctx context.Context, addr string) erro
 			select {
 			case <-ctx.Done():
 				udpConn.Close()
-			case data := <-dataCh:
+			case data, ok := <-dataCh:
+				if !ok {
+					return
+				}
 				bufferData := bytes.NewBuffer(data)
 				err := c.Handle(m, bufferData)
 				if errors.Is(err, ErrConnectionReset) || errors.Is(err, ErrLostPackage) {
 					l.Infow("connection reset or lost package err, restarting connection...", "error", err)
-					c.restartConnCh <- struct{}{}
+					err := c.restartConnections(ctx)
+					if err != nil {
+						c.log.Error("failed to restart connections", "err", err)
+					}
 				} else if err != nil {
 					l.Errorw("fail to handle UDP package", "error", err)
 				}
-			case <-closeCh:
-				return
 			}
-
 		}
 	}()
 
@@ -549,7 +534,7 @@ func (c *Client) ListenToEventsForAddress(ctx context.Context, addr string) erro
 		if err != nil {
 			if isNetConnClosedErr(err) {
 				l.Infow("connection closed", "error", err)
-				closeCh <- struct{}{}
+				close(dataCh)
 				break
 			}
 			l.Errorw("fail to read UDP package", "error", err)
