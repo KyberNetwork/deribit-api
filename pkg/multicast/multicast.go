@@ -391,10 +391,7 @@ func (c *Client) handlePackageHeader(r io.Reader) error {
 	if !ok {
 		c.setSeqNum(channelID, seq)
 		return nil
-	}
-
-	// check for invalid sequence number
-	if seq != lastSeq+1 {
+	} else if seq != lastSeq+1 { // check for invalid sequence number
 		if seq == 0 {
 			return ErrConnectionReset
 		}
