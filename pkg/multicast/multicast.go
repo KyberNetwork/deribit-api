@@ -328,7 +328,7 @@ func (c *Client) restartConnections(ctx context.Context) error {
 // Stop stops listening for events.
 func (c *Client) Stop() error {
 	for _, addr := range c.addrs {
-		go c.closeConnection(addr)
+		c.closeConnection(addr)
 	}
 	return nil
 }
