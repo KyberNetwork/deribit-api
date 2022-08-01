@@ -23,8 +23,8 @@ var (
 	secretKey          = flag.String("secret-key", "", "API secret key")
 	ifname             = flag.String("ifname", "bond-colocation", "Interface name to listen for multicast events")
 	addrs              = flag.String("addrs", "239.111.111.2:6100,239.111.111.2:6100,239.111.111.3:6100", "UDP addresses to listen for multicast events")
-	gatherDataDuration = flag.Duration("gather-data-duration", 3*time.Minute, "gather data duration")
-	storagePath        = flag.String("storage-path", "libs/data/", "API secret key")
+	gatherDataDuration = flag.Duration("gather-data-duration", 3*time.Minute, "Gather data duration")
+	storagePath        = flag.String("storage-path", "examples/", "Path to storage output file")
 	log                *zap.SugaredLogger
 )
 
