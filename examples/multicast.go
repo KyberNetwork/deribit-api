@@ -131,6 +131,7 @@ func listenToTickerEvent(ctx context.Context, m *multicast.Client) {
 }
 
 func main() {
+	flag.Parse()
 	wsConfig := &ws.Configuration{
 		Addr:          *wsEndpoint,
 		ApiKey:        *apiKey,
