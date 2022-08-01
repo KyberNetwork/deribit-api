@@ -408,7 +408,6 @@ func (c *Client) handlePackageHeader(r io.Reader) error {
 			l.Errorw("connection reset error")
 			return ErrConnectionReset
 		} else if seq <= lastSeq {
-			l.Errorw("duplicated package error")
 			return ErrDuplicatedPackage
 		} else {
 			l.Errorw("lost package error")
