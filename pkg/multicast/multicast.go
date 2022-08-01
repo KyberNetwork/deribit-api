@@ -402,14 +402,18 @@ func (c *Client) handlePackageHeader(r io.Reader) error {
 
 	lastSeq, ok := c.getSeqNum(channelID)
 
-	if ok && seq != lastSeq+1 && (seq == 0 || seq > lastSeq) { // check for invalid sequence number, in case currentSeq <= lastSeq we ignore to check
+	if ok && seq != lastSeq+1 { // check for invalid sequence number
 		l := c.log.With("last_sequence", lastSeq, "current_sequence", seq, "channel_id", channelID)
 		if seq == 0 {
 			l.Errorw("connection reset error")
 			return ErrConnectionReset
+		} else if seq <= lastSeq {
+			l.Errorw("duplicated package error")
+			return ErrDuplicatedPackage
+		} else {
+			l.Errorw("lost package error")
+			return ErrLostPackage
 		}
-		l.Errorw("lost package error")
-		return ErrLostPackage
 	}
 	c.setSeqNum(channelID, seq)
 	return nil

@@ -17,6 +17,7 @@ var (
 	ErrLostPackage           = errors.New("lost package")
 	ErrConnectionReset       = errors.New("connection reset")
 	ErrUnsupportedTemplateId = errors.New("unsupported templateId")
+	ErrDuplicatedPackage     = errors.New("duplicated package")
 )
 
 func newInstrumentNotificationChannel(kind, currency string) string {
