@@ -1,10 +1,12 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"flag"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/KyberNetwork/deribit-api/pkg/models"
@@ -22,7 +24,7 @@ var (
 	apiKey             = flag.String("api-key", "", "API client ID")
 	secretKey          = flag.String("secret-key", "", "API secret key")
 	ifname             = flag.String("ifname", "bond-colocation", "Interface name to listen for multicast events")
-	addrs              = flag.String("addrs", "239.111.111.2:6100,239.111.111.2:6100,239.111.111.3:6100", "UDP addresses to listen for multicast events")
+	addrs              = flag.String("addrs", "239.111.111.1:6100,239.111.111.2:6100,239.111.111.3:6100", "UDP addresses to listen for multicast events")
 	gatherDataDuration = flag.Duration("gather-data-duration", 3*time.Minute, "Gather data duration")
 	storagePath        = flag.String("storage-path", "examples/", "Path to storage output file")
 	log                *zap.SugaredLogger
@@ -58,7 +60,8 @@ func saveData(data interface{}, filename string) error {
 }
 
 // listen to multicast orderbook events
-func listenToOrderbookEvent(m *multicast.Client) {
+func listenToOrderbookEvent(ctx context.Context, m *multicast.Client) {
+
 	orderbookChannels := []string{
 		"book.BTC-PERPETUAL",
 		"book.BTC-1AUG22-29000-P",
@@ -71,7 +74,9 @@ func listenToOrderbookEvent(m *multicast.Client) {
 		m.On(channel, listener)
 
 	}
-	time.Sleep(*gatherDataDuration)
+
+	<-ctx.Done()
+
 	for _, channel := range orderbookChannels {
 		m.Off(channel, listener)
 	}
@@ -79,7 +84,7 @@ func listenToOrderbookEvent(m *multicast.Client) {
 }
 
 // listen to multicast trades events
-func listenToTradesEvent(m *multicast.Client) {
+func listenToTradesEvent(ctx context.Context, m *multicast.Client) {
 	tradesChannels := []string{
 		"trade.option.BTC",
 		"trade.future.BTC",
@@ -92,7 +97,9 @@ func listenToTradesEvent(m *multicast.Client) {
 		m.On(channel, listener)
 
 	}
-	time.Sleep(*gatherDataDuration)
+
+	<-ctx.Done()
+
 	for _, channel := range tradesChannels {
 		m.Off(channel, listener)
 	}
@@ -101,7 +108,7 @@ func listenToTradesEvent(m *multicast.Client) {
 }
 
 // listen to multicast ticker events
-func listenToTickerEvent(m *multicast.Client) {
+func listenToTickerEvent(ctx context.Context, m *multicast.Client) {
 	tickerChannels := []string{
 		"ticker.BTC-PERPETUAL",
 		"ticker.BTC-1AUG22-29000-P",
@@ -114,7 +121,9 @@ func listenToTickerEvent(m *multicast.Client) {
 		m.On(channel, listener)
 
 	}
-	time.Sleep(*gatherDataDuration)
+
+	<-ctx.Done()
+
 	for _, channel := range tickerChannels {
 		m.Off(channel, listener)
 	}
@@ -139,9 +148,38 @@ func main() {
 		panic(err)
 	}
 
-	go listenToOrderbookEvent(multicastClient)
-	go listenToTradesEvent(multicastClient)
-	go listenToTickerEvent(multicastClient)
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		time.Sleep(*gatherDataDuration)
+		cancel()
+	}()
 
-	time.Sleep(*gatherDataDuration + 3*time.Second)
+	err = multicastClient.Start(ctx)
+	if err != nil {
+		log.Errorw("failed to start multicast client", "ifname", ifname, "addrs", addrs)
+		panic(err)
+	}
+
+	wg := &sync.WaitGroup{}
+	wg.Add(3) // for orderbook, trades, ticker notifications
+
+	go func() {
+		defer wg.Done()
+		listenToOrderbookEvent(ctx, multicastClient)
+		log.Info("gather multicast orderbook notifications successfully")
+	}()
+
+	go func() {
+		defer wg.Done()
+		listenToTradesEvent(ctx, multicastClient)
+		log.Info("gather multicast trades notifications successfully")
+	}()
+
+	go func() {
+		defer wg.Done()
+		listenToTickerEvent(ctx, multicastClient)
+		log.Info("gather multicast ticker notifications successfully")
+	}()
+
+	wg.Wait()
 }
