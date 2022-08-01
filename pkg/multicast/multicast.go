@@ -317,9 +317,15 @@ func (c *Client) closeConnection(addr string) error {
 	}
 	err := conn.Close()
 	if err != nil {
+		if isNetConnClosedErr(err) {
+			c.log.Infow("connection closed before", "addr", addr)
+			return nil
+		}
 		c.log.Errorw("failed to close connection", "err", err, "addr", addr)
 		return err
 	}
+
+	c.log.Infow("close connection successfully", "addr", addr)
 	c.delConnection(addr)
 	return nil
 }
@@ -395,7 +401,8 @@ func (c *Client) handlePackageHeader(r io.Reader) error {
 	}
 
 	lastSeq, ok := c.getSeqNum(channelID)
-	if ok && seq != lastSeq+1 { // check for invalid sequence number
+
+	if ok && seq != lastSeq+1 && (seq == 0 || seq > lastSeq) { // check for invalid sequence number, in case currentSeq <= lastSeq we ignore to check
 		l := c.log.With("last_sequence", lastSeq, "current_sequence", seq, "channel_id", channelID)
 		if seq == 0 {
 			l.Errorw("connection reset error")
