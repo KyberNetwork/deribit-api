@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"strconv"
 	"sync"
@@ -61,7 +62,7 @@ func NewClient(ifname string, addrs []string, wsClient *websocket.Client, curren
 	if ifname != "" {
 		inf, err = net.InterfaceByName(ifname)
 		if err != nil {
-			l.Errorw("failed to create net interfaces by name", "err", err)
+			l.Errorw("failed to create net interfaces by name", "err", err, "ifname", ifname)
 			return nil, err
 		}
 	}
@@ -154,6 +155,7 @@ func (c *Client) decodeInstrumentEvent(m *sbe.SbeGoMarshaller, r io.Reader, head
 	var ins sbe.Instrument
 	err := ins.Decode(m, r, header.BlockLength, true)
 	if err != nil {
+		c.log.Errorw("failed to decode instrument event", "err", err)
 		return Event{}, nil
 	}
 
@@ -177,6 +179,7 @@ func (c *Client) decodeInstrumentEvent(m *sbe.SbeGoMarshaller, r io.Reader, head
 		OptionType:           ins.OptionType.String(),
 		Strike:               ins.StrikePrice,
 	}
+	c.log.Debugw("decode instrument event successfully", "instrument", instrument)
 	return Event{
 		Type: EventTypeInstrument,
 		Data: instrument,
@@ -187,6 +190,7 @@ func (c *Client) decodeOrderBookEvent(m *sbe.SbeGoMarshaller, r io.Reader, heade
 	var b sbe.Book
 	err := b.Decode(m, r, header.BlockLength, true)
 	if err != nil {
+		c.log.Errorw("failed to decode orderbook event", "err", err)
 		return Event{}, nil
 	}
 
@@ -212,8 +216,8 @@ func (c *Client) decodeOrderBookEvent(m *sbe.SbeGoMarshaller, r io.Reader, heade
 		}
 	}
 
+	c.log.Debugw("decode orderbook event successfully", "book", book)
 	return Event{
-
 		Type: EventTypeOrderBook,
 		Data: book,
 	}, nil
@@ -223,6 +227,7 @@ func (c *Client) decodeTradesEvent(m *sbe.SbeGoMarshaller, r io.Reader, header s
 	var t sbe.Trades
 	err := t.Decode(m, r, header.BlockLength, true)
 	if err != nil {
+		c.log.Errorw("failed to decode trades event", "err", err)
 		return Event{}, nil
 	}
 
@@ -249,6 +254,7 @@ func (c *Client) decodeTradesEvent(m *sbe.SbeGoMarshaller, r io.Reader, header s
 		}
 	}
 
+	c.log.Debugw("decode trades event successfully", "trades", trades)
 	return Event{
 		Type: EventTypeTrades,
 		Data: trades,
@@ -259,6 +265,7 @@ func (c *Client) decodeTickerEvent(m *sbe.SbeGoMarshaller, r io.Reader, header s
 	var t sbe.Ticker
 	err := t.Decode(m, r, header.BlockLength, true)
 	if err != nil {
+		c.log.Errorw("failed to decode ticker event", "err", err)
 		return Event{}, nil
 	}
 
@@ -283,6 +290,8 @@ func (c *Client) decodeTickerEvent(m *sbe.SbeGoMarshaller, r io.Reader, header s
 		BestAskPrice:    &t.BestAskPrice,
 		BestAskAmount:   t.BestAskAmount,
 	}
+
+	c.log.Debugw("decode ticker event successfully", "ticker", ticker)
 	return Event{
 		Type: EventTypeTicker,
 		Data: ticker,
@@ -302,10 +311,13 @@ func (c *Client) Start(ctx context.Context) error {
 }
 
 func (c *Client) closeConnection(addr string) error {
-	conn := c.getConnection(addr)
+	conn, ok := c.getConnection(addr)
+	if !ok {
+		return nil
+	}
 	err := conn.Close()
 	if err != nil {
-		c.log.Errorw("failed to close connection", "err", err)
+		c.log.Errorw("failed to close connection", "err", err, "addr", addr)
 		return err
 	}
 	c.delConnection(addr)
@@ -384,9 +396,12 @@ func (c *Client) handlePackageHeader(r io.Reader) error {
 
 	lastSeq, ok := c.getSeqNum(channelID)
 	if ok && seq != lastSeq+1 { // check for invalid sequence number
+		l := c.log.With("last_sequence", lastSeq, "current_sequence", seq, "channel_id", channelID)
 		if seq == 0 {
+			l.Errorw("connection reset error")
 			return ErrConnectionReset
 		}
+		l.Errorw("lost package error")
 		return ErrLostPackage
 	}
 	c.setSeqNum(channelID, seq)
@@ -398,16 +413,16 @@ func (c *Client) handlePackageHeader(r io.Reader) error {
 // This function needs to handle for missing package, a jump in sequence number, e.g: prevSeq=5, curSeq=7
 // And needs to handle for connection reset, the sequence number is zero.
 // Note that the sequence number go from max(uint32) to zero is a normal event, not a connection reset.
-func (c *Client) Handle(m *sbe.SbeGoMarshaller, r io.Reader) error {
+func (c *Client) Handle(l *zap.SugaredLogger, m *sbe.SbeGoMarshaller, r io.Reader) error {
 	err := c.handlePackageHeader(r)
 	if err != nil {
-		c.log.Errorw("failed to handle package header", "err", err)
+		l.Errorw("failed to handle package header", "err", err)
 		return err
 	}
 
 	events, err := c.decodeEvents(m, r)
 	if err != nil {
-		c.log.Errorw("failed to decode events", "err", err)
+		l.Errorw("failed to decode events", "err", err)
 		return err
 	}
 
@@ -447,11 +462,12 @@ func (c *Client) Handle(m *sbe.SbeGoMarshaller, r io.Reader) error {
 	return nil
 }
 
-func (c *Client) getConnection(addr string) *net.UDPConn {
+func (c *Client) getConnection(addr string) (*net.UDPConn, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	return c.addrConnMap[addr]
+	conn, ok := c.addrConnMap[addr]
+	return conn, ok
 }
 
 func (c *Client) setConnection(addr string, conn *net.UDPConn) {
@@ -469,21 +485,22 @@ func (c *Client) delConnection(addr string) {
 }
 
 func (c *Client) listenToMulticastUDP(addr string) (*net.UDPConn, error) {
+	l := c.log.With("addr", addr)
 	udpAddr, err := net.ResolveUDPAddr("udp", addr)
 	if err != nil {
-		c.log.Errorw("failed to resolve UDP address", "err", err)
+		l.Errorw("failed to resolve UDP address", "err", err)
 		return nil, err
 	}
 
 	udpConn, err := net.ListenMulticastUDP("udp", c.inf, udpAddr)
 	if err != nil {
-		c.log.Errorw("failed to listen to multicast UDP", "error", err)
+		l.Errorw("failed to listen to multicast UDP", "error", err)
 		return nil, err
 	}
 
 	err = udpConn.SetReadBuffer(defaultReadBufferSize)
 	if err != nil {
-		c.log.Errorw("fail to set read buffer for UDP", "error", err)
+		l.Errorw("fail to set read buffer for UDP", "error", err)
 		return nil, err
 	}
 
@@ -497,8 +514,7 @@ func (c *Client) ListenToEventsForAddress(ctx context.Context, addr string) erro
 	dataCh := make(chan []byte, defaultDataChSize)
 	udpConn, err := c.listenToMulticastUDP(addr)
 	if err != nil {
-		l.Errorw("failed to listen to multicast UDP", "err", err)
-		return err
+		log.Fatal("failed to listen to multicast UDP", err)
 	}
 
 	// handle data from dataCh
@@ -513,12 +529,12 @@ func (c *Client) ListenToEventsForAddress(ctx context.Context, addr string) erro
 					return
 				}
 				bufferData := bytes.NewBuffer(data)
-				err := c.Handle(m, bufferData)
+				err := c.Handle(l, m, bufferData)
 				if errors.Is(err, ErrConnectionReset) || errors.Is(err, ErrLostPackage) {
 					l.Infow("connection reset or lost package err, restarting connection...", "error", err)
 					err := c.restartConnections(ctx)
 					if err != nil {
-						c.log.Error("failed to restart connections", "err", err)
+						l.Error("failed to restart connections", "err", err)
 					}
 				} else if err != nil {
 					l.Errorw("fail to handle UDP package", "error", err)
