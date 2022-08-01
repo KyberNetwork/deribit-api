@@ -52,6 +52,7 @@ type Client struct {
 	instrumentsMap    map[uint32]models.Instrument
 	channelIDSeqNum   map[uint16]uint32
 	emitter           *emission.Emitter
+	wg                *sync.WaitGroup
 }
 
 // NewClient creates a new Client instance.
@@ -79,6 +80,7 @@ func NewClient(ifname string, addrs []string, wsClient *websocket.Client, curren
 		instrumentsMap:    make(map[uint32]models.Instrument),
 		channelIDSeqNum:   make(map[uint16]uint32),
 		emitter:           emission.NewEmitter(),
+		wg:                &sync.WaitGroup{},
 	}
 
 	return client, nil
@@ -348,6 +350,8 @@ func (c *Client) Stop() error {
 	for _, addr := range c.addrs {
 		c.closeConnection(addr)
 	}
+
+	c.wg.Wait()
 	return nil
 }
 
@@ -523,6 +527,8 @@ func (c *Client) listenToMulticastUDP(addr string) (*net.UDPConn, error) {
 
 // ListenToEventsForAddress listens to one udp address on given network interface.
 func (c *Client) ListenToEventsForAddress(ctx context.Context, addr string) error {
+	defer c.wg.Done()
+
 	l := c.log.With("addr", addr)
 	dataCh := make(chan []byte, defaultDataChSize)
 	udpConn, err := c.listenToMulticastUDP(addr)
@@ -581,6 +587,7 @@ func (c *Client) ListenToEventsForAddress(ctx context.Context, addr string) erro
 
 // ListenToEvents listens to a list of udp addresses on given network interface.
 func (c *Client) ListenToEvents(ctx context.Context) error {
+	c.wg.Add(len(c.addrs))
 	for _, addr := range c.addrs {
 		go c.ListenToEventsForAddress(ctx, addr)
 	}
