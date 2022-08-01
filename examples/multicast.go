@@ -141,6 +141,12 @@ func main() {
 	log = setupLogger(*debug)
 
 	wsClient := ws.New(log, wsConfig)
+	err := wsClient.Start()
+	if err != nil {
+		log.Error("failed to start ws client")
+		panic(err)
+	}
+
 	udpAddrs := strings.Split(*addrs, ",")
 	multicastClient, err := multicast.NewClient(*ifname, udpAddrs, wsClient, []string{"BTC"})
 	if err != nil {
