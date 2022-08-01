@@ -427,6 +427,9 @@ func (c *Client) handlePackageHeader(r io.Reader) error {
 func (c *Client) Handle(l *zap.SugaredLogger, m *sbe.SbeGoMarshaller, r io.Reader) error {
 	err := c.handlePackageHeader(r)
 	if err != nil {
+		if errors.Is(err, ErrDuplicatedPackage) {
+			return nil
+		}
 		l.Errorw("failed to handle package header", "err", err)
 		return err
 	}
