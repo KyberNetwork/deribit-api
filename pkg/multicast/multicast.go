@@ -451,12 +451,12 @@ func (c *Client) Handle(l *zap.SugaredLogger, m *sbe.SbeGoMarshaller, r io.Reade
 			c.setInstrument(ins.InstrumentID, ins)
 
 			// emit event
-			c.Emit(newInstrumentNotificationChannel(ins.Kind, ins.BaseCurrency), &event.Data)
-			c.Emit(newInstrumentNotificationChannel(KindAny, ins.BaseCurrency), &event.Data)
+			c.Emit(newInstrumentNotificationChannel(ins.Kind, ins.BaseCurrency), &ins)
+			c.Emit(newInstrumentNotificationChannel(KindAny, ins.BaseCurrency), &ins)
 
 		case EventTypeOrderBook:
 			books := event.Data.(models.OrderBookRawNotification)
-			c.Emit(newOrderBookNotificationChannel(books.InstrumentName), &event.Data)
+			c.Emit(newOrderBookNotificationChannel(books.InstrumentName), &books)
 
 		case EventTypeTrades:
 			trades := event.Data.(models.TradesNotification)
@@ -464,12 +464,12 @@ func (c *Client) Handle(l *zap.SugaredLogger, m *sbe.SbeGoMarshaller, r io.Reade
 				tradeIns := trades[0].InstrumentName
 				tradeKind := trades[0].InstrumentKind
 				currency := getCurrencyFromInstrument(tradeIns)
-				c.Emit(newTradesNotificationChannel(tradeKind, currency), &event.Data)
+				c.Emit(newTradesNotificationChannel(tradeKind, currency), &trades)
 			}
 
 		case EventTypeTicker:
 			ticker := event.Data.(models.TickerNotification)
-			c.Emit(newTickerNotificationChannel(ticker.InstrumentName), &event.Data)
+			c.Emit(newTickerNotificationChannel(ticker.InstrumentName), &ticker)
 		}
 	}
 
