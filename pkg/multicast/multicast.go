@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"sync"
 
+	"github.com/KyberNetwork/deribit-api/pkg/common"
 	"github.com/KyberNetwork/deribit-api/pkg/models"
 	"github.com/KyberNetwork/deribit-api/pkg/multicast/sbe"
 	"github.com/KyberNetwork/deribit-api/pkg/websocket"
@@ -19,8 +20,9 @@ import (
 )
 
 const (
-	defaultReadBufferSize = 1500
-	defaultDataChSize     = 1000
+	defaultReadBufferSize   = 1500
+	defaultDataChSize       = 1000
+	defaultEventQueueLength = 100
 )
 
 type EventType int
@@ -48,11 +50,12 @@ type Client struct {
 	addrConnMap map[string]*net.UDPConn
 	wsClient    *websocket.Client
 
-	supportCurrencies []string
-	instrumentsMap    map[uint32]models.Instrument
-	channelIDSeqNum   map[uint16]uint32
-	emitter           *emission.Emitter
-	wg                *sync.WaitGroup
+	supportCurrencies   []string
+	instrumentsMap      map[uint32]models.Instrument
+	channelIDSeqNum     map[uint16]uint32
+	channelIDEventQueue map[uint16]*common.EventQueue
+	emitter             *emission.Emitter
+	wg                  *sync.WaitGroup
 }
 
 // NewClient creates a new Client instance.
@@ -76,11 +79,12 @@ func NewClient(ifname string, addrs []string, wsClient *websocket.Client, curren
 		wsClient:    wsClient,
 		addrConnMap: make(map[string]*net.UDPConn),
 
-		supportCurrencies: currencies,
-		instrumentsMap:    make(map[uint32]models.Instrument),
-		channelIDSeqNum:   make(map[uint16]uint32),
-		emitter:           emission.NewEmitter(),
-		wg:                &sync.WaitGroup{},
+		supportCurrencies:   currencies,
+		instrumentsMap:      make(map[uint32]models.Instrument),
+		channelIDSeqNum:     make(map[uint16]uint32),
+		channelIDEventQueue: make(map[uint16]*common.EventQueue),
+		emitter:             emission.NewEmitter(),
+		wg:                  &sync.WaitGroup{},
 	}
 
 	return client, nil
@@ -293,11 +297,42 @@ func (c *Client) decodeTickerEvent(m *sbe.SbeGoMarshaller, r io.Reader, header s
 		BestAskAmount:   t.BestAskAmount,
 	}
 
-	c.log.Debugw("decode ticker event successfully", "ticker", ticker)
 	return Event{
 		Type: EventTypeTicker,
 		Data: ticker,
 	}, nil
+}
+
+func (c *Client) emitEvents(events []Event) {
+	for _, event := range events {
+		switch event.Type {
+		case EventTypeInstrument:
+			// update instrumentsMap
+			ins := event.Data.(models.Instrument)
+			c.setInstrument(ins.InstrumentID, ins)
+
+			// emit event
+			c.Emit(newInstrumentNotificationChannel(ins.Kind, ins.BaseCurrency), &ins)
+			c.Emit(newInstrumentNotificationChannel(KindAny, ins.BaseCurrency), &ins)
+
+		case EventTypeOrderBook:
+			books := event.Data.(models.OrderBookRawNotification)
+			c.Emit(newOrderBookNotificationChannel(books.InstrumentName), &books)
+
+		case EventTypeTrades:
+			trades := event.Data.(models.TradesNotification)
+			if len(trades) > 0 {
+				tradeIns := trades[0].InstrumentName
+				tradeKind := trades[0].InstrumentKind
+				currency := getCurrencyFromInstrument(tradeIns)
+				c.Emit(newTradesNotificationChannel(tradeKind, currency), &trades)
+			}
+
+		case EventTypeTicker:
+			ticker := event.Data.(models.TickerNotification)
+			c.Emit(newTickerNotificationChannel(ticker.InstrumentName), &ticker)
+		}
+	}
 }
 
 // Start starts listening events on interface `ifname` and `addrs`.
@@ -336,6 +371,7 @@ func (c *Client) closeConnection(addr string) error {
 func (c *Client) restartConnections(ctx context.Context) error {
 	c.mu.Lock()
 	c.channelIDSeqNum = make(map[uint16]uint32)
+	c.channelIDEventQueue = make(map[uint16]*common.EventQueue)
 	c.mu.Unlock()
 
 	err := c.Stop()
@@ -363,11 +399,26 @@ func (c *Client) getSeqNum(channelId uint16) (seq uint32, ok bool) {
 	return
 }
 
-func (c *Client) setSeqNum(channelId uint16, seq uint32) {
+func (c *Client) setSeqNum(channelId uint16, offset uint32) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	c.channelIDSeqNum[channelId] = seq
+	c.channelIDSeqNum[channelId] += offset
+}
+
+func (c *Client) getEventQueue(channelId uint16) (queue *common.EventQueue, ok bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	queue, ok = c.channelIDEventQueue[channelId]
+	return
+}
+
+func (c *Client) setEventQueue(channelId uint16, queue *common.EventQueue) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	c.channelIDEventQueue[channelId] = queue
 }
 
 func (c *Client) getInstrument(id uint32) models.Instrument {
@@ -396,30 +447,27 @@ func readPackageHeader(r io.Reader) (uint16, uint16, uint32, error) {
 	return n, channelID, seq, nil
 }
 
-func (c *Client) handlePackageHeader(r io.Reader) error {
-	_, channelID, seq, err := readPackageHeader(r)
+func (c *Client) handlePackageHeader(r io.Reader) (offset int, channelID uint16, seq uint32, err error) {
+	_, channelID, seq, err = readPackageHeader(r)
 
 	if err != nil {
 		c.log.Errorw("failed to decode events", "err", err)
-		return err
+		return
 	}
 
 	lastSeq, ok := c.getSeqNum(channelID)
-
-	if ok && seq != lastSeq+1 { // check for invalid sequence number
-		l := c.log.With("last_sequence", lastSeq, "current_sequence", seq, "channel_id", channelID)
-		if seq == 0 {
-			l.Errorw("connection reset error")
-			return ErrConnectionReset
-		} else if seq <= lastSeq {
-			return ErrDuplicatedPackage
-		} else {
-			l.Errorw("lost package error")
-			return ErrLostPackage
-		}
+	if !ok {
+		queue := common.NewEventQueue(defaultEventQueueLength)
+		c.setEventQueue(channelID, queue)
+		return
+	} else if seq != 0 && seq <= lastSeq { // check for duplicated package
+		c.log.Debugw("readPackageHeader: duplicated package",
+			"last_sequence", lastSeq, "current_sequence", seq, "channel_id", channelID)
+		err = ErrDuplicatedPackage
+		return
 	}
-	c.setSeqNum(channelID, seq)
-	return nil
+	offset = int(seq - (lastSeq + 1))
+	return
 }
 
 // Handle decodes an UDP packages into events.
@@ -428,7 +476,7 @@ func (c *Client) handlePackageHeader(r io.Reader) error {
 // And needs to handle for connection reset, the sequence number is zero.
 // Note that the sequence number go from max(uint32) to zero is a normal event, not a connection reset.
 func (c *Client) Handle(l *zap.SugaredLogger, m *sbe.SbeGoMarshaller, r io.Reader) error {
-	err := c.handlePackageHeader(r)
+	offset, channelID, seq, err := c.handlePackageHeader(r)
 	if err != nil {
 		if errors.Is(err, ErrDuplicatedPackage) {
 			return nil
@@ -439,43 +487,41 @@ func (c *Client) Handle(l *zap.SugaredLogger, m *sbe.SbeGoMarshaller, r io.Reade
 
 	events, err := c.decodeEvents(m, r)
 	if err != nil {
-		l.Errorw("failed to decode events", "err", err)
+		l.Errorw("failed to decode events", "err", err, "channelID", channelID)
 		return err
 	}
 
-	for _, event := range events {
-		switch event.Type {
-		case EventTypeInstrument:
-			// update instrumentsMap
-			ins, ok := event.Data.(models.Instrument)
-			if !ok {
-				return fmt.Errorf("invalid event type")
-			}
-			c.setInstrument(ins.InstrumentID, ins)
-
-			// emit event
-			c.Emit(newInstrumentNotificationChannel(ins.Kind, ins.BaseCurrency), &ins)
-			c.Emit(newInstrumentNotificationChannel(KindAny, ins.BaseCurrency), &ins)
-
-		case EventTypeOrderBook:
-			books := event.Data.(models.OrderBookRawNotification)
-			c.Emit(newOrderBookNotificationChannel(books.InstrumentName), &books)
-
-		case EventTypeTrades:
-			trades := event.Data.(models.TradesNotification)
-			if len(trades) > 0 {
-				tradeIns := trades[0].InstrumentName
-				tradeKind := trades[0].InstrumentKind
-				currency := getCurrencyFromInstrument(tradeIns)
-				c.Emit(newTradesNotificationChannel(tradeKind, currency), &trades)
-			}
-
-		case EventTypeTicker:
-			ticker := event.Data.(models.TickerNotification)
-			c.Emit(newTickerNotificationChannel(ticker.InstrumentName), &ticker)
-		}
+	eventQueue, ok := c.getEventQueue(channelID)
+	if !ok {
+		return errors.New("failed to get event queue")
 	}
 
+	err = eventQueue.Insert(events, offset)
+	if err != nil {
+		l.Errorw("failed to insert data to event queue", "err", err,
+			"offset", offset, "channelID", channelID, "seq", seq)
+		return ErrConnectionReset
+	}
+
+	var (
+		eventsOffset uint32
+		received     bool
+	)
+	for {
+		data := eventQueue.GetEvent()
+		if data != nil {
+			eventQueue.Next()
+			received = true
+			eventsOffset++
+
+			events := data.([]Event)
+			c.emitEvents(events)
+
+		} else if received {
+			break
+		}
+	}
+	c.setSeqNum(channelID, eventsOffset)
 	return nil
 }
 
@@ -549,8 +595,8 @@ func (c *Client) ListenToEventsForAddress(ctx context.Context, addr string) erro
 				}
 				bufferData := bytes.NewBuffer(data)
 				err := c.Handle(l, m, bufferData)
-				if errors.Is(err, ErrConnectionReset) || errors.Is(err, ErrLostPackage) {
-					l.Infow("connection reset or lost package err, restarting connection...", "error", err)
+				if errors.Is(err, ErrConnectionReset) {
+					l.Infow("restarting connection...", "error", err)
 					err := c.restartConnections(ctx)
 					if err != nil {
 						l.Error("failed to restart connections", "err", err)
