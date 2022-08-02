@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math"
 	"net"
 	"strconv"
 	"sync"
@@ -459,8 +460,10 @@ func (c *Client) handlePackageHeader(r io.Reader) (offset int, channelID uint16,
 	if !ok {
 		queue := common.NewEventQueue(defaultEventQueueLength)
 		c.setEventQueue(channelID, queue)
+		c.setSeqNum(channelID, seq-1)
 		return
-	} else if seq != 0 && seq <= lastSeq { // check for duplicated package
+	} else if (seq <= lastSeq && lastSeq-seq < defaultEventQueueLength) || // check for duplicated package
+		(seq > lastSeq && math.MaxUint32-seq+lastSeq < defaultEventQueueLength) {
 		c.log.Debugw("readPackageHeader: duplicated package",
 			"last_sequence", lastSeq, "current_sequence", seq, "channel_id", channelID)
 		err = ErrDuplicatedPackage
@@ -505,21 +508,16 @@ func (c *Client) Handle(l *zap.SugaredLogger, m *sbe.SbeGoMarshaller, r io.Reade
 
 	var (
 		eventsOffset uint32
-		received     bool
 	)
 	for {
 		data := eventQueue.GetEvent()
-		if data != nil {
-			eventQueue.Next()
-			received = true
-			eventsOffset++
-
-			events := data.([]Event)
-			c.emitEvents(events)
-
-		} else if received {
+		if data == nil {
 			break
 		}
+		eventQueue.Next()
+		eventsOffset++
+		events := data.([]Event)
+		c.emitEvents(events)
 	}
 	c.setSeqNum(channelID, eventsOffset)
 	return nil
