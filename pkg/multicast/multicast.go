@@ -154,7 +154,7 @@ func (c *Client) decodeInstrumentEvent(m *sbe.SbeGoMarshaller, r io.Reader, head
 	err := ins.Decode(m, r, header.BlockLength, true)
 	if err != nil {
 		c.log.Errorw("failed to decode instrument event", "err", err)
-		return Event{}, nil
+		return Event{}, err
 	}
 
 	instrument := models.Instrument{
@@ -189,7 +189,7 @@ func (c *Client) decodeOrderBookEvent(m *sbe.SbeGoMarshaller, r io.Reader, heade
 	err := b.Decode(m, r, header.BlockLength, true)
 	if err != nil {
 		c.log.Errorw("failed to decode orderbook event", "err", err)
-		return Event{}, nil
+		return Event{}, err
 	}
 
 	instrumentName := c.getInstrument(b.InstrumentId).InstrumentName
@@ -225,7 +225,7 @@ func (c *Client) decodeTradesEvent(m *sbe.SbeGoMarshaller, r io.Reader, header s
 	err := t.Decode(m, r, header.BlockLength, true)
 	if err != nil {
 		c.log.Errorw("failed to decode trades event", "err", err)
-		return Event{}, nil
+		return Event{}, err
 	}
 
 	ins := c.getInstrument(t.InstrumentId)
@@ -262,7 +262,7 @@ func (c *Client) decodeTickerEvent(m *sbe.SbeGoMarshaller, r io.Reader, header s
 	err := t.Decode(m, r, header.BlockLength, true)
 	if err != nil {
 		c.log.Errorw("failed to decode ticker event", "err", err)
-		return Event{}, nil
+		return Event{}, err
 	}
 
 	instrumentName := c.getInstrument(t.InstrumentId).InstrumentName
@@ -465,7 +465,7 @@ func (p *Pool) Put(bs Bytes) {
 }
 
 func (c *Client) setupConnection() ([]net.IP, error) {
-	packetConn, err := net.ListenPacket("upd4", fmt.Sprintf("0.0.0.0:%d", c.port))
+	packetConn, err := net.ListenPacket("udp4", fmt.Sprintf("0.0.0.0:%d", c.port))
 
 	if err != nil {
 		c.log.Errorw("failed to initiate packet connection", "err", err, "port", c.port)
@@ -521,7 +521,6 @@ func (c *Client) ListenToEvents(ctx context.Context) error {
 				if !ok {
 					return
 				}
-				pool.Put(data)
 				bufferData := bytes.NewBuffer(data)
 				err := c.Handle(m, bufferData, channelIDSeq)
 				if errors.Is(err, ErrConnectionReset) {
@@ -533,6 +532,7 @@ func (c *Client) ListenToEvents(ctx context.Context) error {
 				} else if err != nil {
 					c.log.Errorw("fail to handle UDP package", "error", err)
 				}
+				pool.Put(data)
 			}
 		}
 	}()
