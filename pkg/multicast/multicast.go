@@ -507,12 +507,12 @@ func (c *Client) ListenToEvents(ctx context.Context) error {
 	}
 
 	dataCh := make(chan []byte, defaultDataChSize)
-	channelIDSeq := make(map[uint16]uint32)
 	pool := NewPool(maxPacketSize)
 
 	// handle data from dataCh
 	go func() {
 		m := sbe.NewSbeGoMarshaller()
+		channelIDSeq := make(map[uint16]uint32)
 		for {
 			select {
 			case <-ctx.Done():

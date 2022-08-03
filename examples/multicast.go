@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"flag"
 	"os"
+	"os/signal"
 	"strings"
 	"sync"
 	"time"
@@ -160,6 +161,9 @@ func main() {
 	ctxTimeOut, cancel := context.WithTimeout(ctx, *gatherDataDuration)
 	defer cancel()
 
+	notifyCtx, stop := signal.NotifyContext(ctxTimeOut, os.Interrupt, os.Kill)
+	defer stop()
+
 	err = multicastClient.Start(ctx)
 	if err != nil {
 		log.Errorw("failed to start multicast client", "ifname", ifname, "addrs", addrs)
@@ -171,19 +175,19 @@ func main() {
 
 	go func() {
 		defer wg.Done()
-		listenToOrderbookEvent(ctxTimeOut, multicastClient)
+		listenToOrderbookEvent(notifyCtx, multicastClient)
 		log.Info("gather multicast orderbook notifications successfully")
 	}()
 
 	go func() {
 		defer wg.Done()
-		listenToTradesEvent(ctxTimeOut, multicastClient)
+		listenToTradesEvent(notifyCtx, multicastClient)
 		log.Info("gather multicast trades notifications successfully")
 	}()
 
 	go func() {
 		defer wg.Done()
-		listenToTickerEvent(ctxTimeOut, multicastClient)
+		listenToTickerEvent(notifyCtx, multicastClient)
 		log.Info("gather multicast ticker notifications successfully")
 	}()
 
