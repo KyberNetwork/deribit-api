@@ -6,24 +6,22 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"math"
 	"net"
 	"strconv"
 	"sync"
 
-	"github.com/KyberNetwork/deribit-api/pkg/common"
 	"github.com/KyberNetwork/deribit-api/pkg/models"
 	"github.com/KyberNetwork/deribit-api/pkg/multicast/sbe"
 	"github.com/KyberNetwork/deribit-api/pkg/websocket"
 	"github.com/chuckpreslar/emission"
 	"go.uber.org/zap"
+	"golang.org/x/net/ipv4"
 )
 
 const (
-	defaultReadBufferSize   = 1500
-	defaultDataChSize       = 1000
-	defaultEventQueueLength = 100
+	maxPackageSize    = 1500
+	defaultDataChSize = 1000
 )
 
 type EventType int
@@ -44,23 +42,20 @@ type Event struct {
 
 // Client represents a client for Deribit multicast.
 type Client struct {
-	log         *zap.SugaredLogger
-	mu          sync.RWMutex
-	inf         *net.Interface
-	addrs       []string
-	addrConnMap map[string]*net.UDPConn
-	wsClient    *websocket.Client
+	log      *zap.SugaredLogger
+	inf      *net.Interface
+	ipAddrs  []string
+	port     int
+	conn     *ipv4.PacketConn
+	wsClient *websocket.Client
 
-	supportCurrencies   []string
-	instrumentsMap      map[uint32]models.Instrument
-	channelIDSeqNum     map[uint16]uint32
-	channelIDEventQueue map[uint16]*common.EventQueue
-	emitter             *emission.Emitter
-	wg                  *sync.WaitGroup
+	supportCurrencies []string
+	instrumentsMap    map[uint32]models.Instrument
+	emitter           *emission.Emitter
 }
 
 // NewClient creates a new Client instance.
-func NewClient(ifname string, addrs []string, wsClient *websocket.Client, currencies []string) (client *Client, err error) {
+func NewClient(ifname string, ipAddrs []string, port int, wsClient *websocket.Client, currencies []string) (client *Client, err error) {
 	l := zap.S()
 
 	var inf *net.Interface
@@ -73,19 +68,15 @@ func NewClient(ifname string, addrs []string, wsClient *websocket.Client, curren
 	}
 
 	client = &Client{
-		log:         l,
-		mu:          sync.RWMutex{},
-		inf:         inf,
-		addrs:       addrs,
-		wsClient:    wsClient,
-		addrConnMap: make(map[string]*net.UDPConn),
+		log:      l,
+		inf:      inf,
+		ipAddrs:  ipAddrs,
+		port:     port,
+		wsClient: wsClient,
 
-		supportCurrencies:   currencies,
-		instrumentsMap:      make(map[uint32]models.Instrument),
-		channelIDSeqNum:     make(map[uint16]uint32),
-		channelIDEventQueue: make(map[uint16]*common.EventQueue),
-		emitter:             emission.NewEmitter(),
-		wg:                  &sync.WaitGroup{},
+		supportCurrencies: currencies,
+		instrumentsMap:    make(map[uint32]models.Instrument),
+		emitter:           emission.NewEmitter(),
 	}
 
 	return client, nil
@@ -186,7 +177,7 @@ func (c *Client) decodeInstrumentEvent(m *sbe.SbeGoMarshaller, r io.Reader, head
 		OptionType:           ins.OptionType.String(),
 		Strike:               ins.StrikePrice,
 	}
-	c.log.Debugw("decode instrument event successfully", "instrument", instrument)
+
 	return Event{
 		Type: EventTypeInstrument,
 		Data: instrument,
@@ -223,7 +214,6 @@ func (c *Client) decodeOrderBookEvent(m *sbe.SbeGoMarshaller, r io.Reader, heade
 		}
 	}
 
-	c.log.Debugw("decode orderbook event successfully", "book", book)
 	return Event{
 		Type: EventTypeOrderBook,
 		Data: book,
@@ -261,7 +251,6 @@ func (c *Client) decodeTradesEvent(m *sbe.SbeGoMarshaller, r io.Reader, header s
 		}
 	}
 
-	c.log.Debugw("decode trades event successfully", "trades", trades)
 	return Event{
 		Type: EventTypeTrades,
 		Data: trades,
@@ -338,7 +327,6 @@ func (c *Client) emitEvents(events []Event) {
 
 // Start starts listening events on interface `ifname` and `addrs`.
 func (c *Client) Start(ctx context.Context) error {
-
 	err := c.buildInstrumentsMapping()
 	if err != nil {
 		c.log.Errorw("failed to build instruments mapping", "err", err)
@@ -348,33 +336,8 @@ func (c *Client) Start(ctx context.Context) error {
 	return c.ListenToEvents(ctx)
 }
 
-func (c *Client) closeConnection(addr string) error {
-	conn, ok := c.getConnection(addr)
-	if !ok {
-		return nil
-	}
-	err := conn.Close()
-	if err != nil {
-		if isNetConnClosedErr(err) {
-			c.log.Infow("connection closed before", "addr", addr)
-			return nil
-		}
-		c.log.Errorw("failed to close connection", "err", err, "addr", addr)
-		return err
-	}
-
-	c.log.Infow("close connection successfully", "addr", addr)
-	c.delConnection(addr)
-	return nil
-}
-
 // restartConnection should re-build instrumentMap.
 func (c *Client) restartConnections(ctx context.Context) error {
-	c.mu.Lock()
-	c.channelIDSeqNum = make(map[uint16]uint32)
-	c.channelIDEventQueue = make(map[uint16]*common.EventQueue)
-	c.mu.Unlock()
-
 	err := c.Stop()
 	if err != nil {
 		return err
@@ -384,55 +347,14 @@ func (c *Client) restartConnections(ctx context.Context) error {
 
 // Stop stops listening for events.
 func (c *Client) Stop() error {
-	for _, addr := range c.addrs {
-		c.closeConnection(addr)
-	}
-
-	c.wg.Wait()
-	return nil
-}
-
-func (c *Client) getSeqNum(channelId uint16) (seq uint32, ok bool) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	seq, ok = c.channelIDSeqNum[channelId]
-	return
-}
-
-func (c *Client) setSeqNum(channelId uint16, offset uint32) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	c.channelIDSeqNum[channelId] += offset
-}
-
-func (c *Client) getEventQueue(channelId uint16) (queue *common.EventQueue, ok bool) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	queue, ok = c.channelIDEventQueue[channelId]
-	return
-}
-
-func (c *Client) setEventQueue(channelId uint16, queue *common.EventQueue) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	c.channelIDEventQueue[channelId] = queue
+	return c.conn.Close()
 }
 
 func (c *Client) getInstrument(id uint32) models.Instrument {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
 	return c.instrumentsMap[id]
 }
 
 func (c *Client) setInstrument(id uint32, ins models.Instrument) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
 	c.instrumentsMap[id] = ins
 }
 
@@ -448,29 +370,33 @@ func readPackageHeader(r io.Reader) (uint16, uint16, uint32, error) {
 	return n, channelID, seq, nil
 }
 
-func (c *Client) handlePackageHeader(r io.Reader) (offset int, channelID uint16, seq uint32, err error) {
-	_, channelID, seq, err = readPackageHeader(r)
+func (c *Client) handlePackageHeader(r io.Reader, chanelIDSeq map[uint16]uint32) error {
+	_, channelID, seq, err := readPackageHeader(r)
 
 	if err != nil {
 		c.log.Errorw("failed to decode events", "err", err)
-		return
+		return err
 	}
 
-	lastSeq, ok := c.getSeqNum(channelID)
-	if !ok {
-		queue := common.NewEventQueue(defaultEventQueueLength)
-		c.setEventQueue(channelID, queue)
-		c.setSeqNum(channelID, seq-1)
-		return
-	} else if (seq <= lastSeq && lastSeq-seq < defaultEventQueueLength) || // check for duplicated package
-		(seq > lastSeq && math.MaxUint32-seq+lastSeq < defaultEventQueueLength) {
-		c.log.Debugw("readPackageHeader: duplicated package",
-			"last_sequence", lastSeq, "current_sequence", seq, "channel_id", channelID)
-		err = ErrDuplicatedPackage
-		return
+	lastSeq, ok := chanelIDSeq[channelID]
+
+	if ok {
+		l := c.log.With("channelID", channelID, "current_seq", seq, "last_seq")
+		if seq == 0 && math.MaxUint32-lastSeq >= 2 {
+			return ErrConnectionReset
+		}
+		if seq == lastSeq {
+			l.Debugw("package duplicated")
+			return ErrDuplicatedPackage
+		}
+		if seq != lastSeq+1 {
+			l.Warnw("package out of order")
+			return ErrOutOfOrder
+		}
 	}
-	offset = int(seq - (lastSeq + 1))
-	return
+
+	chanelIDSeq[channelID] = seq
+	return nil
 }
 
 // Handle decodes an UDP packages into events.
@@ -478,107 +404,99 @@ func (c *Client) handlePackageHeader(r io.Reader) (offset int, channelID uint16,
 // This function needs to handle for missing package, a jump in sequence number, e.g: prevSeq=5, curSeq=7
 // And needs to handle for connection reset, the sequence number is zero.
 // Note that the sequence number go from max(uint32) to zero is a normal event, not a connection reset.
-func (c *Client) Handle(l *zap.SugaredLogger, m *sbe.SbeGoMarshaller, r io.Reader) error {
-	offset, channelID, seq, err := c.handlePackageHeader(r)
+func (c *Client) Handle(m *sbe.SbeGoMarshaller, r io.Reader, chanelIDSeq map[uint16]uint32) error {
+	err := c.handlePackageHeader(r, chanelIDSeq)
 	if err != nil {
-		if errors.Is(err, ErrDuplicatedPackage) {
+		if errors.Is(err, ErrDuplicatedPackage) || errors.Is(err, ErrOutOfOrder) {
 			return nil
 		}
-		l.Errorw("failed to handle package header", "err", err)
+		c.log.Errorw("failed to handle package header", "err", err)
 		return err
 	}
 
 	events, err := c.decodeEvents(m, r)
 	if err != nil {
-		l.Errorw("failed to decode events", "err", err, "channelID", channelID)
+		c.log.Errorw("failed to decode events", "err", err)
 		return err
 	}
 
-	eventQueue, ok := c.getEventQueue(channelID)
-	if !ok {
-		return errors.New("failed to get event queue")
-	}
-
-	err = eventQueue.Insert(events, offset)
-	if err != nil {
-		l.Errorw("failed to insert data to event queue", "err", err,
-			"offset", offset, "channelID", channelID, "seq", seq)
-		return ErrConnectionReset
-	}
-
-	var (
-		eventsOffset uint32
-	)
-	for {
-		data := eventQueue.GetEvent()
-		if data == nil {
-			break
-		}
-		eventQueue.Next()
-		eventsOffset++
-		events := data.([]Event)
-		c.emitEvents(events)
-	}
-	c.setSeqNum(channelID, eventsOffset)
+	c.emitEvents(events)
 	return nil
 }
 
-func (c *Client) getConnection(addr string) (*net.UDPConn, bool) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	conn, ok := c.addrConnMap[addr]
-	return conn, ok
+type Bytes []byte
+type Pool struct {
+	mu             *sync.RWMutex
+	queue          []Bytes
+	maxPackageSize int
 }
 
-func (c *Client) setConnection(addr string, conn *net.UDPConn) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+func NewPool(maxPackageSize int) *Pool {
+	q := make([]Bytes, 0)
 
-	c.addrConnMap[addr] = conn
+	return &Pool{
+		mu:             &sync.RWMutex{},
+		queue:          q,
+		maxPackageSize: maxPackageSize,
+	}
 }
 
-func (c *Client) delConnection(addr string) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+func (p *Pool) Get() Bytes {
+	p.mu.Lock()
+	defer p.mu.Unlock()
 
-	delete(c.addrConnMap, addr)
+	if length := len(p.queue); length > 0 {
+		item := p.queue[length-1]
+		p.queue[length-1] = nil
+		p.queue = p.queue[:length-1]
+		return item
+	}
+	return make(Bytes, p.maxPackageSize)
 }
 
-func (c *Client) listenToMulticastUDP(addr string) (*net.UDPConn, error) {
-	l := c.log.With("addr", addr)
-	udpAddr, err := net.ResolveUDPAddr("udp", addr)
+func (p *Pool) Put(bs Bytes) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	p.queue = append(p.queue, bs)
+}
+
+// ListenToEvents listens to a list of udp addresses on given network interface.
+func (c *Client) ListenToEvents(ctx context.Context) error {
+	packetConn, err := net.ListenPacket("upd4", fmt.Sprintf("0.0.0.0:%d", c.port))
+
 	if err != nil {
-		l.Errorw("failed to resolve UDP address", "err", err)
-		return nil, err
+		c.log.Errorw("failed to initiate packet connection", "err", err, "port", c.port)
+		return err
+	}
+	defer packetConn.Close()
+
+	ipv4PacketConn := ipv4.NewPacketConn(packetConn)
+
+	ipGroups := make([]net.IP, len(c.ipAddrs))
+
+	err = ipv4PacketConn.SetControlMessage(ipv4.FlagDst, true)
+	if err != nil {
+		c.log.Errorw("failed to set control message", "err", err)
 	}
 
-	udpConn, err := net.ListenMulticastUDP("udp", c.inf, udpAddr)
-	if err != nil {
-		l.Errorw("failed to listen to multicast UDP", "error", err)
-		return nil, err
+	for _, ipAddr := range c.ipAddrs {
+		group := net.ParseIP(ipAddr)
+		if group == nil {
+			return ErrInvalidIpv4Address
+		}
+
+		err := ipv4PacketConn.JoinGroup(c.inf, &net.UDPAddr{IP: group})
+		if err != nil {
+			c.log.Errorw("failed to join group", "group", group, "err", err, "ipAddr", ipAddr)
+		}
+
+		ipGroups = append(ipGroups, group)
 	}
 
-	err = udpConn.SetReadBuffer(defaultReadBufferSize)
-	if err != nil {
-		l.Errorw("fail to set read buffer for UDP", "error", err)
-		return nil, err
-	}
-
-	c.setConnection(addr, udpConn)
-	return udpConn, nil
-}
-
-// ListenToEventsForAddress listens to one udp address on given network interface.
-func (c *Client) ListenToEventsForAddress(ctx context.Context, addr string) error {
-	defer c.wg.Done()
-
-	l := c.log.With("addr", addr)
 	dataCh := make(chan []byte, defaultDataChSize)
-	udpConn, err := c.listenToMulticastUDP(addr)
-	if err != nil {
-		log.Fatal("failed to listen to multicast UDP", err)
-	}
+	channelIDSeq := make(map[uint16]uint32)
+	pool := NewPool(maxPackageSize)
 
 	// handle data from dataCh
 	go func() {
@@ -586,54 +504,55 @@ func (c *Client) ListenToEventsForAddress(ctx context.Context, addr string) erro
 		for {
 			select {
 			case <-ctx.Done():
-				udpConn.Close()
+				ipv4PacketConn.Close()
 			case data, ok := <-dataCh:
 				if !ok {
 					return
 				}
+				pool.Put(data)
 				bufferData := bytes.NewBuffer(data)
-				err := c.Handle(l, m, bufferData)
+				err := c.Handle(m, bufferData, channelIDSeq)
 				if errors.Is(err, ErrConnectionReset) {
-					l.Infow("restarting connection...", "error", err)
+					c.log.Infow("restarting connection...", "error", err)
 					err := c.restartConnections(ctx)
 					if err != nil {
-						l.Error("failed to restart connections", "err", err)
+						c.log.Error("failed to restart connections", "err", err)
 					}
 				} else if err != nil {
-					l.Errorw("fail to handle UDP package", "error", err)
+					c.log.Errorw("fail to handle UDP package", "error", err)
 				}
 			}
 		}
 	}()
 
-	// listen to event
+	// listen to event using ipv4 package
 	for {
-		data := make([]byte, defaultReadBufferSize)
-		n, err := udpConn.Read(data)
+		data := pool.Get()
+		n, cm, _, err := ipv4PacketConn.ReadFrom(data)
 		if err != nil {
 			if isNetConnClosedErr(err) {
-				l.Infow("connection closed", "error", err)
+				c.log.Infow("connection closed", "error", err)
 				close(dataCh)
 				break
 			}
-			l.Errorw("fail to read UDP package", "error", err)
-		} else {
-			select {
-			case dataCh <- data[:n]:
-			default:
-				l.Errorw("data channel is full", "length", len(dataCh))
+		}
+
+		if cm.Dst.IsMulticast() {
+			if checkValidDstAddress(cm.Dst, ipGroups) { // joined group, push data to dataCh
 				dataCh <- data[:n]
+			} else { // unknown group, discard
+				continue
 			}
 		}
 	}
 	return nil
 }
 
-// ListenToEvents listens to a list of udp addresses on given network interface.
-func (c *Client) ListenToEvents(ctx context.Context) error {
-	c.wg.Add(len(c.addrs))
-	for _, addr := range c.addrs {
-		go c.ListenToEventsForAddress(ctx, addr)
+func checkValidDstAddress(dest net.IP, groups []net.IP) bool {
+	for _, ipGroup := range groups {
+		if dest.Equal(ipGroup) {
+			return true
+		}
 	}
-	return nil
+	return false
 }
