@@ -538,25 +538,28 @@ func (c *Client) ListenToEvents(ctx context.Context) error {
 	}()
 
 	// listen to event using ipv4 package
-	for {
-		data := pool.Get()
-		n, cm, _, err := c.conn.ReadFrom(data)
-		if err != nil {
-			if isNetConnClosedErr(err) {
-				c.log.Infow("connection closed", "error", err)
-				close(dataCh)
-				break
+	go func() {
+		for {
+			data := pool.Get()
+			n, cm, _, err := c.conn.ReadFrom(data)
+			if err != nil {
+				if isNetConnClosedErr(err) {
+					c.log.Infow("connection closed", "error", err)
+					close(dataCh)
+					break
+				}
 			}
-		}
 
-		if cm.Dst.IsMulticast() {
-			if checkValidDstAddress(cm.Dst, ipGroups) { // joined group, push data to dataCh
-				dataCh <- data[:n]
-			} else { // unknown group, discard
-				continue
+			if cm.Dst.IsMulticast() {
+				if checkValidDstAddress(cm.Dst, ipGroups) { // joined group, push data to dataCh
+					dataCh <- data[:n]
+				} else { // unknown group, discard
+					continue
+				}
 			}
 		}
-	}
+	}()
+
 	return nil
 }
 
