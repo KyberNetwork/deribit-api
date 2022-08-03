@@ -384,7 +384,7 @@ func (c *Client) handlePackageHeader(r io.Reader, chanelIDSeq map[uint16]uint32)
 	lastSeq, ok := chanelIDSeq[channelID]
 
 	if ok {
-		l := c.log.With("channelID", channelID, "current_seq", seq, "last_seq")
+		l := c.log.With("channelID", channelID, "current_seq", seq, "last_seq", lastSeq)
 		if seq == 0 && math.MaxUint32-lastSeq >= 2 {
 			return ErrConnectionReset
 		}
@@ -461,7 +461,7 @@ func (p *Pool) Put(bs Bytes) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	p.queue = append(p.queue, bs)
+	p.queue = append(p.queue, bs[:cap(bs)])
 }
 
 func (c *Client) setupConnection() ([]net.IP, error) {
