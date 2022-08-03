@@ -20,7 +20,7 @@ import (
 )
 
 const (
-	maxPackageSize    = 1500
+	maxPacketSize     = 1500
 	defaultDataChSize = 1000
 )
 
@@ -347,7 +347,10 @@ func (c *Client) restartConnections(ctx context.Context) error {
 
 // Stop stops listening for events.
 func (c *Client) Stop() error {
-	return c.conn.Close()
+	if c.conn != nil {
+		return c.conn.Close()
+	}
+	return nil
 }
 
 func (c *Client) getInstrument(id uint32) models.Instrument {
@@ -426,18 +429,18 @@ func (c *Client) Handle(m *sbe.SbeGoMarshaller, r io.Reader, chanelIDSeq map[uin
 
 type Bytes []byte
 type Pool struct {
-	mu             *sync.RWMutex
-	queue          []Bytes
-	maxPackageSize int
+	mu            *sync.RWMutex
+	queue         []Bytes
+	maxPacketSize int
 }
 
-func NewPool(maxPackageSize int) *Pool {
+func NewPool(maxPacketSize int) *Pool {
 	q := make([]Bytes, 0)
 
 	return &Pool{
-		mu:             &sync.RWMutex{},
-		queue:          q,
-		maxPackageSize: maxPackageSize,
+		mu:            &sync.RWMutex{},
+		queue:         q,
+		maxPacketSize: maxPacketSize,
 	}
 }
 
@@ -445,13 +448,13 @@ func (p *Pool) Get() Bytes {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	if length := len(p.queue); length > 0 {
-		item := p.queue[length-1]
-		p.queue[length-1] = nil
-		p.queue = p.queue[:length-1]
+	if n := len(p.queue); n > 0 {
+		item := p.queue[n-1]
+		p.queue[n-1] = nil
+		p.queue = p.queue[:n-1]
 		return item
 	}
-	return make(Bytes, p.maxPackageSize)
+	return make(Bytes, p.maxPacketSize)
 }
 
 func (p *Pool) Put(bs Bytes) {
@@ -461,42 +464,51 @@ func (p *Pool) Put(bs Bytes) {
 	p.queue = append(p.queue, bs)
 }
 
-// ListenToEvents listens to a list of udp addresses on given network interface.
-func (c *Client) ListenToEvents(ctx context.Context) error {
+func (c *Client) setupConnection() ([]net.IP, error) {
 	packetConn, err := net.ListenPacket("upd4", fmt.Sprintf("0.0.0.0:%d", c.port))
 
 	if err != nil {
 		c.log.Errorw("failed to initiate packet connection", "err", err, "port", c.port)
-		return err
+		return nil, err
 	}
-	defer packetConn.Close()
 
-	ipv4PacketConn := ipv4.NewPacketConn(packetConn)
+	c.conn = ipv4.NewPacketConn(packetConn)
 
 	ipGroups := make([]net.IP, len(c.ipAddrs))
 
-	err = ipv4PacketConn.SetControlMessage(ipv4.FlagDst, true)
+	err = c.conn.SetControlMessage(ipv4.FlagDst, true)
 	if err != nil {
 		c.log.Errorw("failed to set control message", "err", err)
+		return nil, err
 	}
 
-	for _, ipAddr := range c.ipAddrs {
+	for index, ipAddr := range c.ipAddrs {
 		group := net.ParseIP(ipAddr)
 		if group == nil {
-			return ErrInvalidIpv4Address
+			return nil, ErrInvalidIpv4Address
 		}
-
-		err := ipv4PacketConn.JoinGroup(c.inf, &net.UDPAddr{IP: group})
+		err := c.conn.JoinGroup(c.inf, &net.UDPAddr{IP: group})
 		if err != nil {
 			c.log.Errorw("failed to join group", "group", group, "err", err, "ipAddr", ipAddr)
+			return nil, err
 		}
+		ipGroups[index] = group
+	}
 
-		ipGroups = append(ipGroups, group)
+	return ipGroups, nil
+}
+
+// ListenToEvents listens to a list of udp addresses on given network interface.
+func (c *Client) ListenToEvents(ctx context.Context) error {
+	ipGroups, err := c.setupConnection()
+	if err != nil {
+		c.log.Errorw("failed to setup ipv4 packet connection", "err", err)
+		return nil
 	}
 
 	dataCh := make(chan []byte, defaultDataChSize)
 	channelIDSeq := make(map[uint16]uint32)
-	pool := NewPool(maxPackageSize)
+	pool := NewPool(maxPacketSize)
 
 	// handle data from dataCh
 	go func() {
@@ -504,7 +516,7 @@ func (c *Client) ListenToEvents(ctx context.Context) error {
 		for {
 			select {
 			case <-ctx.Done():
-				ipv4PacketConn.Close()
+				c.conn.Close()
 			case data, ok := <-dataCh:
 				if !ok {
 					return
@@ -528,7 +540,7 @@ func (c *Client) ListenToEvents(ctx context.Context) error {
 	// listen to event using ipv4 package
 	for {
 		data := pool.Get()
-		n, cm, _, err := ipv4PacketConn.ReadFrom(data)
+		n, cm, _, err := c.conn.ReadFrom(data)
 		if err != nil {
 			if isNetConnClosedErr(err) {
 				c.log.Infow("connection closed", "error", err)
