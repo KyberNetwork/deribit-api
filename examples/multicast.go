@@ -158,11 +158,11 @@ func main() {
 	}
 
 	ctx := context.Background()
-	ctxTimeOut, cancel := context.WithTimeout(ctx, *gatherDataDuration)
-	defer cancel()
-
-	notifyCtx, stop := signal.NotifyContext(ctxTimeOut, os.Interrupt, os.Kill)
+	notifyCtx, stop := signal.NotifyContext(ctx, os.Interrupt, os.Kill)
 	defer stop()
+
+	ctxTimeOut, cancel := context.WithTimeout(notifyCtx, *gatherDataDuration)
+	defer cancel()
 
 	err = multicastClient.Start(ctx)
 	if err != nil {
@@ -175,19 +175,19 @@ func main() {
 
 	go func() {
 		defer wg.Done()
-		listenToOrderbookEvent(notifyCtx, multicastClient)
+		listenToOrderbookEvent(ctxTimeOut, multicastClient)
 		log.Info("gather multicast orderbook notifications successfully")
 	}()
 
 	go func() {
 		defer wg.Done()
-		listenToTradesEvent(notifyCtx, multicastClient)
+		listenToTradesEvent(ctxTimeOut, multicastClient)
 		log.Info("gather multicast trades notifications successfully")
 	}()
 
 	go func() {
 		defer wg.Done()
-		listenToTickerEvent(notifyCtx, multicastClient)
+		listenToTickerEvent(ctxTimeOut, multicastClient)
 		log.Info("gather multicast ticker notifications successfully")
 	}()
 
