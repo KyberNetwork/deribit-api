@@ -200,42 +200,42 @@ func (c *Client) ResetConnection() {
 
 // Stop stop ws connection
 func (c *Client) Stop() {
-	l := c.l.With("func", "Stop")
+	logger := c.l.With("func", "Stop")
 	if c.autoReconnect {
 		close(c.stopC)
 	}
 	c.setIsConnected(false)
 	close(c.heartCancel)
 	if err := c.rpcConn.Close(); err != nil {
-		l.Warnw("error close ws connection", "err", err)
+		logger.Warnw("error close ws connection", "err", err)
 	}
 	c.once = sync.Once{}
 	c.subscriptions = nil
 }
 
 func (c *Client) heartbeat() {
-	l := c.l.With("func", "heartbeat")
+	logger := c.l.With("func", "heartbeat")
 	t := time.NewTicker(5 * time.Second)
 	for {
 		select {
 		case <-t.C:
 			if _, err := c.Test(context.Background()); err != nil {
-				l.Errorw("error test server", "err", err)
+				logger.Errorw("error test server", "err", err)
 				_ = c.conn.Close() // close server
 			}
 		case <-c.heartCancel:
-			l.Debug("cancel heartbeat check")
+			logger.Debug("cancel heartbeat check")
 			return
 		}
 	}
 }
 
 func (c *Client) reconnect() {
-	l := c.l.With("func", "reconnect")
+	logger := c.l.With("func", "reconnect")
 	for {
 		select {
 		case <-c.stopC:
-			l.Infow("connection will be stopped")
+			logger.Infow("connection will be stopped")
 			return
 		case <-c.rpcConn.DisconnectNotify():
 			c.restartConnection()
@@ -244,9 +244,9 @@ func (c *Client) reconnect() {
 }
 
 func (c *Client) restartConnection() {
-	l := c.l.With("func", "restartConnection")
+	logger := c.l.With("func", "restartConnection")
 	c.setIsConnected(false)
-	l.Infow("disconnect, reconnect...")
+	logger.Infow("disconnect, reconnect...")
 	close(c.heartCancel)
 	time.Sleep(1 * time.Second)
 	for {
@@ -254,10 +254,10 @@ func (c *Client) restartConnection() {
 			if c.rpcConn != nil {
 				_ = c.rpcConn.Close()
 			}
-			l.Errorw("reconnect: start error", "err", err)
+			logger.Errorw("reconnect: start error", "err", err)
 			time.Sleep(5 * time.Second)
 		} else {
-			l.Infow("reconnect successfully")
+			logger.Infow("reconnect successfully")
 			break
 		}
 	}

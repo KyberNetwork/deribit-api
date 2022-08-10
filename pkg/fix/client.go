@@ -201,25 +201,25 @@ func New(
 	secretKey string,
 	settings *quickfix.Settings,
 ) (*Client, error) {
-	l := zap.S()
+	logger := zap.S()
 
 	// Get TargetCompID and SenderCompID from settings.
 	globalSettings := settings.GlobalSettings()
 	targetCompID, err := globalSettings.Setting("TargetCompID")
 	if err != nil {
-		l.Errorw("Fail to read TargetCompID from settings", "error", err)
+		logger.Errorw("Fail to read TargetCompID from settings", "error", err)
 		return nil, err
 	}
 
 	senderCompID, err := globalSettings.Setting("SenderCompID")
 	if err != nil {
-		l.Errorw("Fail to read SenderCompID from settings", "error", err)
+		logger.Errorw("Fail to read SenderCompID from settings", "error", err)
 		return nil, err
 	}
 
 	// Create a new Client object.
 	client := &Client{
-		log:              l,
+		log:              logger,
 		apiKey:           apiKey,
 		secretKey:        secretKey,
 		settings:         settings,
@@ -309,25 +309,25 @@ func (c *Client) Close() {
 }
 
 func (c *Client) handleSubscriptions(msgType string, msg *quickfix.Message) {
-	l := c.log.With("msg", msg)
+	logger := c.log.With("msg", msg)
 
 	switch enum.MsgType(msgType) {
 	case enum.MsgType_MARKET_DATA_SNAPSHOT_FULL_REFRESH, enum.MsgType_MARKET_DATA_INCREMENTAL_REFRESH:
 		symbol, err := getSymbol(msg)
 		if err != nil {
-			l.Warnw("Fail to get symbol", "error", err)
+			logger.Warnw("Fail to get symbol", "error", err)
 			return
 		}
 
 		entries, err := getMDEntries(msg)
 		if err != nil {
-			l.Warnw("Fail to get NoMDEntries", "error", err)
+			logger.Warnw("Fail to get NoMDEntries", "error", err)
 			return
 		}
 
 		markPrice, err := getMarkPrice(msg)
 		if err != nil {
-			l.Warnw("Fail to get mark price", "error", err)
+			logger.Warnw("Fail to get mark price", "error", err)
 			return
 		}
 
@@ -339,7 +339,7 @@ func (c *Client) handleSubscriptions(msgType string, msg *quickfix.Message) {
 			entry := entries.Get(i)
 			entryType, err := getMDEntryType(entry)
 			if err != nil {
-				l.Warnw("No value for MDEntryType", "error", err)
+				logger.Warnw("No value for MDEntryType", "error", err)
 				continue
 			}
 
@@ -351,13 +351,13 @@ func (c *Client) handleSubscriptions(msgType string, msg *quickfix.Message) {
 
 			serverTime, err := getMDEntryDate(entry)
 			if err != nil {
-				l.Warnw("Fail to get MDEntryTime", "error", err)
+				logger.Warnw("Fail to get MDEntryTime", "error", err)
 				continue
 			}
 
 			price, err := getMDEntryPx(entry)
 			if err != nil {
-				l.Warnw("Fail to get MDEntryPx", "error", err)
+				logger.Warnw("Fail to get MDEntryPx", "error", err)
 				continue
 			}
 
@@ -367,14 +367,14 @@ func (c *Client) handleSubscriptions(msgType string, msg *quickfix.Message) {
 			} else {
 				action, err = getMDUpdateAction(entry)
 				if err != nil {
-					l.Warnw("Fail to get MDUpdateAction", "error", err)
+					logger.Warnw("Fail to get MDUpdateAction", "error", err)
 					continue
 				}
 			}
 
 			amount, err := getMDEntrySize(entry)
 			if err != nil {
-				l.Warnw("Fail to get MDEntrySize", "error", err)
+				logger.Warnw("Fail to get MDEntrySize", "error", err)
 				continue
 			}
 
@@ -398,19 +398,19 @@ func (c *Client) handleSubscriptions(msgType string, msg *quickfix.Message) {
 			case enum.MDEntryType_TRADE:
 				indexPrice, err := getGroupPrice(entry)
 				if err != nil {
-					l.Warnw("Fail to get index price", "error", err)
+					logger.Warnw("Fail to get index price", "error", err)
 					continue
 				}
 
 				side, err := getGroupSide(entry)
 				if err != nil {
-					l.Warnw("Fail to get trade side", "error", err)
+					logger.Warnw("Fail to get trade side", "error", err)
 					continue
 				}
 
 				tradeID, err := getGroupTradeID(entry)
 				if err != nil {
-					l.Warnw("Fail to get trade ID", "error", err)
+					logger.Warnw("Fail to get trade ID", "error", err)
 					continue
 				}
 

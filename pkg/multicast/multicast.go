@@ -57,20 +57,26 @@ type Client struct {
 }
 
 // NewClient creates a new Client instance.
-func NewClient(ifname string, ipAddrs []string, port int, wsClient *websocket.Client, currencies []string) (client *Client, err error) {
-	l := zap.S()
+func NewClient(
+	ifname string,
+	ipAddrs []string,
+	port int,
+	wsClient *websocket.Client,
+	currencies []string,
+) (client *Client, err error) {
+	log := zap.S()
 
 	var inf *net.Interface
 	if ifname != "" {
 		inf, err = net.InterfaceByName(ifname)
 		if err != nil {
-			l.Errorw("failed to create net interfaces by name", "err", err, "ifname", ifname)
+			log.Errorw("failed to create net interfaces by name", "err", err, "ifname", ifname)
 			return nil, err
 		}
 	}
 
 	client = &Client{
-		log:      l,
+		log:      log,
 		inf:      inf,
 		ipAddrs:  ipAddrs,
 		port:     port,
@@ -99,7 +105,9 @@ func (c *Client) buildInstrumentsMapping() error {
 }
 
 // getAllInstrument returns a list of all instruments by currencies
-func getAllInstrument(wsClient *websocket.Client, currencies []string) ([]models.Instrument, error) {
+func getAllInstrument(
+	wsClient *websocket.Client, currencies []string,
+) ([]models.Instrument, error) {
 	result := make([]models.Instrument, 0)
 	for _, currency := range currencies {
 		ins, err := wsClient.GetInstruments(
@@ -116,19 +124,21 @@ func getAllInstrument(wsClient *websocket.Client, currencies []string) ([]models
 }
 
 // decodeEvents decodes a UDP package into a list of events.
-func (c *Client) decodeEvents(m *sbe.SbeGoMarshaller, r io.Reader) (events []Event, err error) {
+func (c *Client) decodeEvents(
+	marshaler *sbe.SbeGoMarshaller, reader io.Reader,
+) (events []Event, err error) {
 	// Decode Sbe messages
 	for {
 		// Decode message header.
 		var header sbe.MessageHeader
-		err = header.Decode(m, r)
+		err = header.Decode(marshaler, reader)
 		if err != nil {
 			if errors.Is(err, io.EOF) {
 				err = nil
 			}
 			return
 		}
-		event, err := c.decodeEvent(m, r, header)
+		event, err := c.decodeEvent(marshaler, reader, header)
 		if err != nil {
 			return nil, err
 		}
@@ -136,24 +146,32 @@ func (c *Client) decodeEvents(m *sbe.SbeGoMarshaller, r io.Reader) (events []Eve
 	}
 }
 
-func (c *Client) decodeEvent(m *sbe.SbeGoMarshaller, r io.Reader, header sbe.MessageHeader) (Event, error) {
+func (c *Client) decodeEvent(
+	marshaler *sbe.SbeGoMarshaller,
+	reader io.Reader,
+	header sbe.MessageHeader,
+) (Event, error) {
 	switch header.TemplateId {
 	case 1000:
-		return c.decodeInstrumentEvent(m, r, header)
+		return c.decodeInstrumentEvent(marshaler, reader, header)
 	case 1001:
-		return c.decodeOrderBookEvent(m, r, header)
+		return c.decodeOrderBookEvent(marshaler, reader, header)
 	case 1002:
-		return c.decodeTradesEvent(m, r, header)
+		return c.decodeTradesEvent(marshaler, reader, header)
 	case 1003:
-		return c.decodeTickerEvent(m, r, header)
+		return c.decodeTickerEvent(marshaler, reader, header)
 	default:
 		return Event{}, fmt.Errorf("%w, templateId: %d", ErrUnsupportedTemplateId, header.TemplateId)
 	}
 }
 
-func (c *Client) decodeInstrumentEvent(m *sbe.SbeGoMarshaller, r io.Reader, header sbe.MessageHeader) (Event, error) {
+func (c *Client) decodeInstrumentEvent(
+	marshaler *sbe.SbeGoMarshaller,
+	reader io.Reader,
+	header sbe.MessageHeader,
+) (Event, error) {
 	var ins sbe.Instrument
-	err := ins.Decode(m, r, header.BlockLength, true)
+	err := ins.Decode(marshaler, reader, header.BlockLength, true)
 	if err != nil {
 		c.log.Errorw("failed to decode instrument event", "err", err)
 		return Event{}, err
@@ -186,23 +204,27 @@ func (c *Client) decodeInstrumentEvent(m *sbe.SbeGoMarshaller, r io.Reader, head
 	}, nil
 }
 
-func (c *Client) decodeOrderBookEvent(m *sbe.SbeGoMarshaller, r io.Reader, header sbe.MessageHeader) (Event, error) {
-	var b sbe.Book
-	err := b.Decode(m, r, header.BlockLength, true)
+func (c *Client) decodeOrderBookEvent(
+	marshaler *sbe.SbeGoMarshaller,
+	reader io.Reader,
+	header sbe.MessageHeader,
+) (Event, error) {
+	var book sbe.Book
+	err := book.Decode(marshaler, reader, header.BlockLength, true)
 	if err != nil {
 		c.log.Errorw("failed to decode orderbook event", "err", err)
 		return Event{}, err
 	}
 
-	instrumentName := c.getInstrument(b.InstrumentId).InstrumentName
+	instrumentName := c.getInstrument(book.InstrumentId).InstrumentName
 	book := models.OrderBookRawNotification{
-		Timestamp:      int64(b.TimestampMs),
+		Timestamp:      int64(book.TimestampMs),
 		InstrumentName: instrumentName,
-		PrevChangeID:   int64(b.PrevChangeId),
-		ChangeID:       int64(b.ChangeId),
+		PrevChangeID:   int64(book.PrevChangeId),
+		ChangeID:       int64(book.ChangeId),
 	}
 
-	for _, bookChange := range b.ChangesList {
+	for _, bookChange := range book.ChangesList {
 		item := models.OrderBookNotificationItem{
 			Action: bookChange.Change.String(),
 			Price:  bookChange.Price,
@@ -222,18 +244,22 @@ func (c *Client) decodeOrderBookEvent(m *sbe.SbeGoMarshaller, r io.Reader, heade
 	}, nil
 }
 
-func (c *Client) decodeTradesEvent(m *sbe.SbeGoMarshaller, r io.Reader, header sbe.MessageHeader) (Event, error) {
-	var t sbe.Trades
-	err := t.Decode(m, r, header.BlockLength, true)
+func (c *Client) decodeTradesEvent(
+	marshaler *sbe.SbeGoMarshaller,
+	reader io.Reader,
+	header sbe.MessageHeader,
+) (Event, error) {
+	var trades sbe.Trades
+	err := trades.Decode(marshaler, reader, header.BlockLength, true)
 	if err != nil {
 		c.log.Errorw("failed to decode trades event", "err", err)
 		return Event{}, err
 	}
 
-	ins := c.getInstrument(t.InstrumentId)
+	ins := c.getInstrument(trades.InstrumentId)
 
-	trades := make(models.TradesNotification, len(t.TradesList))
-	for id, trade := range t.TradesList {
+	trades := make(models.TradesNotification, len(trades.TradesList))
+	for id, trade := range trades.TradesList {
 
 		trades[id] = models.Trade{
 			Amount:         trade.Amount,
@@ -259,34 +285,38 @@ func (c *Client) decodeTradesEvent(m *sbe.SbeGoMarshaller, r io.Reader, header s
 	}, nil
 }
 
-func (c *Client) decodeTickerEvent(m *sbe.SbeGoMarshaller, r io.Reader, header sbe.MessageHeader) (Event, error) {
-	var t sbe.Ticker
-	err := t.Decode(m, r, header.BlockLength, true)
+func (c *Client) decodeTickerEvent(
+	marshaler *sbe.SbeGoMarshaller,
+	reader io.Reader,
+	header sbe.MessageHeader,
+) (Event, error) {
+	var ticker sbe.Ticker
+	err := ticker.Decode(marshaler, reader, header.BlockLength, true)
 	if err != nil {
 		c.log.Errorw("failed to decode ticker event", "err", err)
 		return Event{}, err
 	}
 
-	instrumentName := c.getInstrument(t.InstrumentId).InstrumentName
+	instrumentName := c.getInstrument(ticker.InstrumentId).InstrumentName
 
 	ticker := models.TickerNotification{
-		Timestamp:       t.TimestampMs,
+		Timestamp:       ticker.TimestampMs,
 		Stats:           models.Stats{},
-		State:           t.InstrumentState.String(),
-		SettlementPrice: t.SettlementPrice,
-		OpenInterest:    t.OpenInterest,
-		MinPrice:        t.MinSellPrice,
-		MaxPrice:        t.MaxBuyPrice,
-		MarkPrice:       t.MarkPrice,
-		LastPrice:       t.LastPrice,
+		State:           ticker.InstrumentState.String(),
+		SettlementPrice: ticker.SettlementPrice,
+		OpenInterest:    ticker.OpenInterest,
+		MinPrice:        ticker.MinSellPrice,
+		MaxPrice:        ticker.MaxBuyPrice,
+		MarkPrice:       ticker.MarkPrice,
+		LastPrice:       ticker.LastPrice,
 		InstrumentName:  instrumentName,
-		IndexPrice:      t.IndexPrice,
-		Funding8H:       t.Funding8h,
-		CurrentFunding:  t.CurrentFunding,
-		BestBidPrice:    &t.BestBidPrice,
-		BestBidAmount:   t.BestBidAmount,
-		BestAskPrice:    &t.BestAskPrice,
-		BestAskAmount:   t.BestAskAmount,
+		IndexPrice:      ticker.IndexPrice,
+		Funding8H:       ticker.Funding8h,
+		CurrentFunding:  ticker.CurrentFunding,
+		BestBidPrice:    &ticker.BestBidPrice,
+		BestBidAmount:   ticker.BestBidAmount,
+		BestAskPrice:    &ticker.BestAskPrice,
+		BestAskAmount:   ticker.BestAskAmount,
 	}
 
 	return Event{
@@ -370,9 +400,9 @@ func (c *Client) setInstrument(id uint32, ins models.Instrument) {
 	c.instrumentsMap[id] = ins
 }
 
-func readPackageHeader(r io.Reader) (uint16, uint16, uint32, error) {
+func readPackageHeader(reader io.Reader) (uint16, uint16, uint32, error) {
 	b8 := make([]byte, 8)
-	if _, err := io.ReadFull(r, b8); err != nil {
+	if _, err := io.ReadFull(reader, b8); err != nil {
 		return 0, 0, 0, err
 	}
 
@@ -382,8 +412,8 @@ func readPackageHeader(r io.Reader) (uint16, uint16, uint32, error) {
 	return n, channelID, seq, nil
 }
 
-func (c *Client) handlePackageHeader(r io.Reader, chanelIDSeq map[uint16]uint32) error {
-	_, channelID, seq, err := readPackageHeader(r)
+func (c *Client) handlePackageHeader(reader io.Reader, chanelIDSeq map[uint16]uint32) error {
+	_, channelID, seq, err := readPackageHeader(reader)
 
 	if err != nil {
 		c.log.Errorw("failed to decode events", "err", err)
@@ -393,17 +423,16 @@ func (c *Client) handlePackageHeader(r io.Reader, chanelIDSeq map[uint16]uint32)
 	lastSeq, ok := chanelIDSeq[channelID]
 
 	if ok {
-		l := c.log.With("channelID", channelID, "current_seq", seq, "last_seq", lastSeq)
+		log := c.log.With("channelID", channelID, "current_seq", seq, "last_seq", lastSeq)
 		if seq == 0 && math.MaxUint32-lastSeq >= 2 {
 			return ErrConnectionReset
 		}
 		if seq == lastSeq {
-			l.Debugw("package duplicated")
+			log.Debugw("package duplicated")
 			return ErrDuplicatedPackage
 		}
 		if seq != lastSeq+1 {
-			l.Warnw("package out of order")
-			// return ErrOutOfOrder
+			log.Warnw("package out of order")
 		}
 	}
 
@@ -416,8 +445,12 @@ func (c *Client) handlePackageHeader(r io.Reader, chanelIDSeq map[uint16]uint32)
 // This function needs to handle for missing package, a jump in sequence number, e.g: prevSeq=5, curSeq=7
 // And needs to handle for connection reset, the sequence number is zero.
 // Note that the sequence number go from max(uint32) to zero is a normal event, not a connection reset.
-func (c *Client) Handle(m *sbe.SbeGoMarshaller, r io.Reader, chanelIDSeq map[uint16]uint32) error {
-	err := c.handlePackageHeader(r, chanelIDSeq)
+func (c *Client) Handle(
+	marshaler *sbe.SbeGoMarshaller,
+	reader io.Reader,
+	chanelIDSeq map[uint16]uint32,
+) error {
+	err := c.handlePackageHeader(reader, chanelIDSeq)
 	if err != nil {
 		if errors.Is(err, ErrDuplicatedPackage) {
 			return nil
@@ -426,7 +459,7 @@ func (c *Client) Handle(m *sbe.SbeGoMarshaller, r io.Reader, chanelIDSeq map[uin
 		return err
 	}
 
-	events, err := c.decodeEvents(m, r)
+	events, err := c.decodeEvents(marshaler, reader)
 	if err != nil {
 		c.log.Errorw("failed to decode events", "err", err)
 		return err
@@ -520,7 +553,7 @@ func (c *Client) ListenToEvents(ctx context.Context) error {
 
 	// handle data from dataCh
 	go func() {
-		m := sbe.NewSbeGoMarshaller()
+		marshaler := sbe.NewSbeGoMarshaller()
 		channelIDSeq := make(map[uint16]uint32)
 		for {
 			select {
@@ -531,7 +564,7 @@ func (c *Client) ListenToEvents(ctx context.Context) error {
 					return
 				}
 				bufferData := bytes.NewBuffer(data)
-				err := c.Handle(m, bufferData, channelIDSeq)
+				err := c.Handle(marshaler, bufferData, channelIDSeq)
 				if errors.Is(err, ErrConnectionReset) {
 					c.log.Infow("restarting connection...", "error", err)
 					err := c.restartConnections(ctx)
@@ -550,7 +583,7 @@ func (c *Client) ListenToEvents(ctx context.Context) error {
 	go func() {
 		for {
 			data := pool.Get()
-			n, cm, _, err := c.conn.ReadFrom(data)
+			n, cmessage, _, err := c.conn.ReadFrom(data)
 			if err != nil {
 				if isNetConnClosedErr(err) {
 					c.log.Infow("connection closed", "error", err)
@@ -559,8 +592,8 @@ func (c *Client) ListenToEvents(ctx context.Context) error {
 				}
 			}
 
-			if cm.Dst.IsMulticast() {
-				if checkValidDstAddress(cm.Dst, ipGroups) { // joined group, push data to dataCh
+			if cmessage.Dst.IsMulticast() {
+				if checkValidDstAddress(cmessage.Dst, ipGroups) { // joined group, push data to dataCh
 					dataCh <- data[:n]
 				} else { // unknown group, discard
 					continue

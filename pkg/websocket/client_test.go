@@ -24,6 +24,8 @@ func newClient() *Client {
 }
 
 func TestClient_GetTime(t *testing.T) {
+	t.Parallel()
+
 	client := newClient()
 	tm, err := client.GetTime(context.Background())
 	if err != nil {
@@ -34,6 +36,8 @@ func TestClient_GetTime(t *testing.T) {
 }
 
 func TestClient_Test(t *testing.T) {
+	t.Parallel()
+
 	client := newClient()
 	result, err := client.Test(context.Background())
 	assert.Nil(t, err)
@@ -41,6 +45,8 @@ func TestClient_Test(t *testing.T) {
 }
 
 func TestClient_GetBookSummaryByCurrency(t *testing.T) {
+	t.Parallel()
+
 	client := newClient()
 	params := &models.GetBookSummaryByCurrencyParams{
 		Currency: "BTC",
@@ -55,6 +61,8 @@ func TestClient_GetBookSummaryByCurrency(t *testing.T) {
 }
 
 func TestClient_GetBookSummaryByInstrument(t *testing.T) {
+	t.Parallel()
+
 	client := newClient()
 	params := &models.GetBookSummaryByInstrumentParams{
 		InstrumentName: "BTC-PERPETUAL",
@@ -68,6 +76,8 @@ func TestClient_GetBookSummaryByInstrument(t *testing.T) {
 }
 
 func TestClient_GetOrderBook(t *testing.T) {
+	t.Parallel()
+
 	client := newClient()
 	params := &models.GetOrderBookParams{
 		InstrumentName: "BTC-PERPETUAL",
@@ -82,6 +92,8 @@ func TestClient_GetOrderBook(t *testing.T) {
 }
 
 func TestClient_Ticker(t *testing.T) {
+	t.Parallel()
+
 	client := newClient()
 	params := &models.TickerParams{
 		InstrumentName: "BTC-PERPETUAL",
@@ -95,6 +107,8 @@ func TestClient_Ticker(t *testing.T) {
 }
 
 func TestClient_GetPosition(t *testing.T) {
+	t.Parallel()
+
 	client := newClient()
 	params := &models.GetPositionParams{
 		InstrumentName: "BTC-PERPETUAL",
@@ -108,6 +122,8 @@ func TestClient_GetPosition(t *testing.T) {
 }
 
 func TestClient_BuyMarket(t *testing.T) {
+	t.Parallel()
+
 	client := newClient()
 	params := &models.BuyParams{
 		InstrumentName: "BTC-PERPETUAL",
@@ -123,6 +139,8 @@ func TestClient_BuyMarket(t *testing.T) {
 }
 
 func TestClient_Buy(t *testing.T) {
+	t.Parallel()
+
 	client := newClient()
 	price := 6000.0
 	params := &models.BuyParams{
@@ -140,6 +158,8 @@ func TestClient_Buy(t *testing.T) {
 }
 
 func TestJsonOmitempty(t *testing.T) {
+	t.Parallel()
+
 	maxShow := 40.0
 	price := 6000.0
 	params := &models.BuyParams{
