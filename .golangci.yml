@@ -1,0 +1,13 @@
+run:
+  deadline: 5m
+
+linters:
+  enable-all: true
+  disable:
+    - maligned
+    - interfacer
+    - scopelint
+    - gomoddirectives
+    - nolintlint
+    - exhaustivestruct
+    - wrapcheck
