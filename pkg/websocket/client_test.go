@@ -172,6 +172,6 @@ func TestJsonOmitempty(t *testing.T) {
 		MaxShow:        &maxShow,
 	}
 	data, err := json.Marshal(params)
-	require.Error(t, err)
+	require.NoError(t, err)
 	t.Log(string(data))
 }
