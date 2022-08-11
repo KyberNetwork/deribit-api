@@ -20,6 +20,8 @@ import (
 const (
 	RealBaseURL = "wss://www.deribit.com/ws/api/v2/"
 	TestBaseURL = "wss://test.deribit.com/ws/api/v2/"
+
+	heartbeatInterval = 30
 )
 
 var (
@@ -35,7 +37,7 @@ type Event struct {
 
 type Configuration struct {
 	Addr          string `json:"addr"`
-	ApiKey        string `json:"api_key"`
+	APIKey        string `json:"api_key"`
 	SecretKey     string `json:"secret_key"`
 	AutoReconnect bool   `json:"auto_reconnect"`
 	DebugMode     bool   `json:"debug_mode"`
@@ -68,7 +70,7 @@ func New(l *zap.SugaredLogger, cfg *Configuration) *Client {
 	return &Client{
 		l:                l,
 		addr:             cfg.Addr,
-		apiKey:           cfg.ApiKey,
+		apiKey:           cfg.APIKey,
 		secretKey:        cfg.SecretKey,
 		autoReconnect:    cfg.AutoReconnect,
 		debugMode:        cfg.DebugMode,
@@ -127,17 +129,21 @@ func (c *Client) Start() error {
 	// auth
 	if c.apiKey != "" && c.secretKey != "" {
 		if _, err := c.Auth(context.Background()); err != nil {
-			return fmt.Errorf("failed to auth, err = %s", err)
+			return fmt.Errorf("failed to auth: %w", err)
 		}
 	}
 
 	// subscribe
-	if err := c.subscribe(c.subscriptions, false); err != nil {
-		return fmt.Errorf("failed to subscribe, err=%s", err)
+	if err = c.subscribe(c.subscriptions, false); err != nil {
+		return fmt.Errorf("failed to subscribe: %w", err)
 	}
 
-	if _, err := c.SetHeartbeat(context.Background(), &models.SetHeartbeatParams{Interval: 30}); err != nil {
-		return fmt.Errorf("failed to set heartbeat, err=%s", err)
+	_, err = c.SetHeartbeat(
+		context.Background(),
+		&models.SetHeartbeatParams{Interval: heartbeatInterval},
+	)
+	if err != nil {
+		return fmt.Errorf("failed to set heartbeat: %w", err)
 	}
 
 	go c.heartbeat()
@@ -250,15 +256,16 @@ func (c *Client) restartConnection() {
 	close(c.heartCancel)
 	time.Sleep(1 * time.Second)
 	for {
-		if err := c.Start(); err != nil {
-			if c.rpcConn != nil {
-				_ = c.rpcConn.Close()
-			}
-			logger.Errorw("reconnect: start error", "err", err)
-			time.Sleep(5 * time.Second)
-		} else {
-			logger.Infow("reconnect successfully")
+		err := c.Start()
+		if err == nil {
+			logger.Infow("Reconnect successfully")
 			break
 		}
+
+		if c.rpcConn != nil {
+			_ = c.rpcConn.Close()
+		}
+		logger.Warnw("Reconnect: start error", "err", err)
+		time.Sleep(5 * time.Second)
 	}
 }

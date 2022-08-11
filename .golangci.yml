@@ -15,3 +15,14 @@ linters:
     - tagliatelle
     - goerr113
     - varnamelen
+    - nlreturn
+    - ireturn
+    - ifshort
+    - wsl
+    - godot
+    - gomnd
+    - exhaustivestruct
+    - exhaustive
+    - forcetypeassert
+    - paralleltest
+    - contextcheck

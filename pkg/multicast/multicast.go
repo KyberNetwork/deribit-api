@@ -161,7 +161,7 @@ func (c *Client) decodeEvent(
 	case 1003:
 		return c.decodeTickerEvent(marshaler, reader, header)
 	default:
-		return Event{}, fmt.Errorf("%w, templateId: %d", ErrUnsupportedTemplateId, header.TemplateId)
+		return Event{}, fmt.Errorf("%w, templateId: %d", ErrUnsupportedTemplateID, header.TemplateId)
 	}
 }
 
@@ -217,7 +217,7 @@ func (c *Client) decodeOrderBookEvent(
 	}
 
 	instrumentName := c.getInstrument(book.InstrumentId).InstrumentName
-	book := models.OrderBookRawNotification{
+	event := models.OrderBookRawNotification{
 		Timestamp:      int64(book.TimestampMs),
 		InstrumentName: instrumentName,
 		PrevChangeID:   int64(book.PrevChangeId),
@@ -232,15 +232,15 @@ func (c *Client) decodeOrderBookEvent(
 		}
 
 		if bookChange.Side == sbe.BookSide.Ask {
-			book.Asks = append(book.Asks, item)
+			event.Asks = append(event.Asks, item)
 		} else if bookChange.Side == sbe.BookSide.Bid {
-			book.Bids = append(book.Bids, item)
+			event.Bids = append(event.Bids, item)
 		}
 	}
 
 	return Event{
 		Type: EventTypeOrderBook,
-		Data: book,
+		Data: event,
 	}, nil
 }
 
@@ -258,10 +258,9 @@ func (c *Client) decodeTradesEvent(
 
 	ins := c.getInstrument(trades.InstrumentId)
 
-	trades := make(models.TradesNotification, len(trades.TradesList))
-	for id, trade := range trades.TradesList {
-
-		trades[id] = models.Trade{
+	tradesEvent := make(models.TradesNotification, len(trades.TradesList))
+	for i, trade := range trades.TradesList {
+		tradesEvent[i] = models.Trade{
 			Amount:         trade.Amount,
 			BlockTradeID:   strconv.FormatUint(trade.BlockTradeId, 10),
 			Direction:      trade.Direction.String(),
@@ -281,7 +280,7 @@ func (c *Client) decodeTradesEvent(
 
 	return Event{
 		Type: EventTypeTrades,
-		Data: trades,
+		Data: tradesEvent,
 	}, nil
 }
 
@@ -299,7 +298,7 @@ func (c *Client) decodeTickerEvent(
 
 	instrumentName := c.getInstrument(ticker.InstrumentId).InstrumentName
 
-	ticker := models.TickerNotification{
+	event := models.TickerNotification{
 		Timestamp:       ticker.TimestampMs,
 		Stats:           models.Stats{},
 		State:           ticker.InstrumentState.String(),
@@ -321,7 +320,7 @@ func (c *Client) decodeTickerEvent(
 
 	return Event{
 		Type: EventTypeTicker,
-		Data: ticker,
+		Data: event,
 	}, nil
 }
 
@@ -414,7 +413,6 @@ func readPackageHeader(reader io.Reader) (uint16, uint16, uint32, error) {
 
 func (c *Client) handlePackageHeader(reader io.Reader, chanelIDSeq map[uint16]uint32) error {
 	_, channelID, seq, err := readPackageHeader(reader)
-
 	if err != nil {
 		c.log.Errorw("failed to decode events", "err", err)
 		return err
@@ -470,6 +468,7 @@ func (c *Client) Handle(
 }
 
 type Bytes []byte
+
 type Pool struct {
 	mu            *sync.RWMutex
 	queue         []Bytes
@@ -508,7 +507,6 @@ func (p *Pool) Put(bs Bytes) {
 
 func (c *Client) setupConnection() ([]net.IP, error) {
 	packetConn, err := net.ListenPacket("udp4", fmt.Sprintf("0.0.0.0:%d", c.port))
-
 	if err != nil {
 		c.log.Errorw("failed to initiate packet connection", "err", err, "port", c.port)
 		return nil, err
@@ -553,7 +551,7 @@ func (c *Client) ListenToEvents(ctx context.Context) error {
 
 	// handle data from dataCh
 	go func() {
-		marshaler := sbe.NewSbeGoMarshaller()
+		m := sbe.NewSbeGoMarshaller()
 		channelIDSeq := make(map[uint16]uint32)
 		for {
 			select {
@@ -563,16 +561,9 @@ func (c *Client) ListenToEvents(ctx context.Context) error {
 				if !ok {
 					return
 				}
-				bufferData := bytes.NewBuffer(data)
-				err := c.Handle(marshaler, bufferData, channelIDSeq)
-				if errors.Is(err, ErrConnectionReset) {
-					c.log.Infow("restarting connection...", "error", err)
-					err := c.restartConnections(ctx)
-					if err != nil {
-						c.log.Error("failed to restart connections", "err", err)
-					}
-				} else if err != nil {
-					c.log.Errorw("fail to handle UDP package", "error", err)
+				err := c.handleUDPPackage(ctx, m, channelIDSeq, data)
+				if err != nil {
+					c.log.Errorw("Fail to handle UDP package", "error", err)
 				}
 				pool.Put(data)
 			}
@@ -583,26 +574,63 @@ func (c *Client) ListenToEvents(ctx context.Context) error {
 	go func() {
 		for {
 			data := pool.Get()
-			n, cmessage, _, err := c.conn.ReadFrom(data)
+
+			res, err := readUDPMulticastPackage(c.conn, ipGroups, data)
 			if err != nil {
+				pool.Put(data)
 				if isNetConnClosedErr(err) {
-					c.log.Infow("connection closed", "error", err)
+					c.log.Infow("Connection closed", "error", err)
 					close(dataCh)
 					break
 				}
+				c.log.Errorw("Fail to read UDP multicast package", "error", err)
 			}
 
-			if cmessage.Dst.IsMulticast() {
-				if checkValidDstAddress(cmessage.Dst, ipGroups) { // joined group, push data to dataCh
-					dataCh <- data[:n]
-				} else { // unknown group, discard
-					continue
-				}
-			}
+			dataCh <- res
 		}
 	}()
 
 	return nil
+}
+
+func (c *Client) handleUDPPackage(
+	ctx context.Context,
+	m *sbe.SbeGoMarshaller,
+	channelIDSeq map[uint16]uint32,
+	data []byte,
+) error {
+	buf := bytes.NewBuffer(data)
+	err := c.Handle(m, buf, channelIDSeq)
+	if errors.Is(err, ErrConnectionReset) {
+		c.log.Infow("restarting connection...", "error", err)
+		err := c.restartConnections(ctx)
+		if err != nil {
+			c.log.Error("failed to restart connections", "err", err)
+			return err
+		}
+	}
+
+	if err != nil {
+		c.log.Errorw("fail to handle UDP package", "error", err)
+		return err
+	}
+
+	return nil
+}
+
+func readUDPMulticastPackage(conn *ipv4.PacketConn, ipGroups []net.IP, data []byte) ([]byte, error) {
+	n, cm, _, err := conn.ReadFrom(data)
+	if err != nil {
+		return nil, err
+	}
+
+	if cm.Dst.IsMulticast() {
+		if checkValidDstAddress(cm.Dst, ipGroups) {
+			return data[:n], nil
+		}
+	}
+
+	return nil, nil
 }
 
 func checkValidDstAddress(dest net.IP, groups []net.IP) bool {
