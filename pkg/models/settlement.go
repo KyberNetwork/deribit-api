@@ -1,5 +1,6 @@
 package models
 
+// nolint:misspell
 type Settlement struct {
 	Funded            float64 `json:"funded"`
 	Funding           float64 `json:"funding"`
@@ -11,7 +12,7 @@ type Settlement struct {
 	MarkPrice         float64 `json:"mark_price"`
 	InstrumentName    string  `json:"instrument_name"`
 	IndexPrice        float64 `json:"index_price"`
-	SessionBankruptcy float64 `json:"session_bankruptcy"`
+	SessionBankrupcy  float64 `json:"session_bankrupcy"`
 	SessionTax        float64 `json:"session_tax"`
 	SessionTaxRate    float64 `json:"session_tax_rate"`
 	Socialized        float64 `json:"socialized"`

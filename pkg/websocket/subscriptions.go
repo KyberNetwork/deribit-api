@@ -27,21 +27,6 @@ func (c *Client) subscriptionsProcess(event *Event) {
 	}
 
 	c.emitEvent(logger, event, notification)
-
-	switch {
-	case strings.HasPrefix(event.Channel, "user.changes"):
-		c.emitEvent(logger, event, &models.UserChangesNotification{})
-	case strings.HasPrefix(event.Channel, "user.orders"):
-		if strings.HasSuffix(event.Channel, ".raw") {
-			c.emitEvent(logger, event, &models.Order{})
-		} else {
-			c.emitEvent(logger, event, &models.UserOrderNotification{})
-		}
-	case strings.HasPrefix(event.Channel, "user.portfolio"):
-		c.emitEvent(logger, event, &models.PortfolioNotification{})
-	case strings.HasPrefix(event.Channel, "user.trades"):
-		c.emitEvent(logger, event, &models.UserTradesNotification{})
-	}
 }
 
 // nolint:cyclop

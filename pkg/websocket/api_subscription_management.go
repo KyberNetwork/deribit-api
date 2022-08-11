@@ -146,11 +146,9 @@ func (c *Client) removeChannels(channels []string) {
 	}
 
 	if len(channels) > 0 {
-		var subscriptions []string
-		for _, channel := range c.subscriptions {
-			if _, ok := c.subscriptionsMap[channel]; ok {
-				subscriptions = append(subscriptions, channel)
-			}
+		subscriptions := make([]string, 0, len(c.subscriptionsMap))
+		for channel := range c.subscriptionsMap {
+			subscriptions = append(subscriptions, channel)
 		}
 		c.subscriptions = subscriptions
 	}

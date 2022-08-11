@@ -539,6 +539,7 @@ func (c *Client) setupConnection() ([]net.IP, error) {
 }
 
 // ListenToEvents listens to a list of udp addresses on given network interface.
+// nolint:cyclop
 func (c *Client) ListenToEvents(ctx context.Context) error {
 	ipGroups, err := c.setupConnection()
 	if err != nil {
@@ -586,7 +587,11 @@ func (c *Client) ListenToEvents(ctx context.Context) error {
 				c.log.Errorw("Fail to read UDP multicast package", "error", err)
 			}
 
-			dataCh <- res
+			if res != nil {
+				dataCh <- res
+			} else {
+				pool.Put(data)
+			}
 		}
 	}()
 
