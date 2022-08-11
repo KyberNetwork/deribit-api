@@ -577,20 +577,19 @@ func (c *Client) ListenToEvents(ctx context.Context) error {
 			data := pool.Get()
 
 			res, err := readUDPMulticastPackage(c.conn, ipGroups, data)
-			if err != nil {
+			if res == nil {
 				pool.Put(data)
+			}
+
+			if err != nil {
 				if isNetConnClosedErr(err) {
 					c.log.Infow("Connection closed", "error", err)
 					close(dataCh)
 					break
 				}
 				c.log.Errorw("Fail to read UDP multicast package", "error", err)
-			} else {
-				if res != nil {
-					dataCh <- res
-				} else {
-					pool.Put(data)
-				}
+			} else if res != nil {
+				dataCh <- res
 			}
 		}
 	}()
