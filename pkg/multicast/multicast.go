@@ -585,12 +585,12 @@ func (c *Client) ListenToEvents(ctx context.Context) error {
 					break
 				}
 				c.log.Errorw("Fail to read UDP multicast package", "error", err)
-			}
-
-			if res != nil {
-				dataCh <- res
 			} else {
-				pool.Put(data)
+				if res != nil {
+					dataCh <- res
+				} else {
+					pool.Put(data)
+				}
 			}
 		}
 	}()
