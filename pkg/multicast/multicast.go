@@ -605,18 +605,16 @@ func (c *Client) handleUDPPackage(
 ) error {
 	buf := bytes.NewBuffer(data)
 	err := c.Handle(m, buf, channelIDSeq)
-	if errors.Is(err, ErrConnectionReset) {
-		c.log.Infow("restarting connection...", "error", err)
-		err := c.restartConnections(ctx)
-		if err != nil {
-			c.log.Error("failed to restart connections", "err", err)
+	if err != nil {
+		if errors.Is(err, ErrConnectionReset) {
+			if err = c.restartConnections(ctx); err != nil {
+				c.log.Error("failed to restart connections", "err", err)
+				return err
+			}
+		} else {
+			c.log.Errorw("Fail to handle UDP package", "error", err)
 			return err
 		}
-	}
-
-	if err != nil {
-		c.log.Errorw("fail to handle UDP package", "error", err)
-		return err
 	}
 
 	return nil
