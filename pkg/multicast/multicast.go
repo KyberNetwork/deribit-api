@@ -141,9 +141,6 @@ func (c *Client) decodeEvents(
 		}
 		event, err := c.decodeEvent(marshaler, reader, header)
 		if err != nil {
-			if errors.Is(err, ErrUnsupportedTemplateID) {
-				continue
-			}
 			return nil, err
 		}
 		events = append(events, event)
