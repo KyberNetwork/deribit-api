@@ -186,5 +186,4 @@ func (ts *MulticastTestSuite) TestDecodeEvents() {
 	}
 
 	require.Equal(expectedOutput, events)
-
 }
