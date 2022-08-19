@@ -8,6 +8,7 @@ import (
 	"io"
 	"math"
 	"net"
+	"reflect"
 	"strconv"
 	"sync"
 
@@ -140,6 +141,9 @@ func (c *Client) decodeEvents(
 		}
 		event, err := c.decodeEvent(marshaler, reader, header)
 		if err != nil {
+			if errors.Is(err, ErrUnsupportedTemplateID) {
+				continue
+			}
 			return nil, err
 		}
 		events = append(events, event)
@@ -197,6 +201,7 @@ func (c *Client) decodeInstrumentEvent(
 		OptionType:           ins.OptionType.String(),
 		Strike:               ins.StrikePrice,
 	}
+	replaceNaNValueOfStruct(&instrument, reflect.TypeOf(&models.Instrument{}))
 
 	return Event{
 		Type: EventTypeInstrument,
@@ -317,6 +322,8 @@ func (c *Client) decodeTickerEvent(
 		BestAskPrice:    &ticker.BestAskPrice,
 		BestAskAmount:   ticker.BestAskAmount,
 	}
+
+	replaceNaNValueOfStruct(&event, reflect.TypeOf(&models.TickerNotification{}))
 
 	return Event{
 		Type: EventTypeTicker,
