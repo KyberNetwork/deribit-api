@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"io"
 	"reflect"
+
+	"github.com/pkg/errors"
 )
 
 type TickDirectionEnum uint8
@@ -31,5 +33,6 @@ func (t TickDirectionEnum) RangeCheck() error {
 			return nil
 		}
 	}
-	return fmt.Errorf("range check failed on TickDirection, unknown enumeration value %d", t)
+	description := fmt.Sprintf("range check failed on TickDirection, unknown enumeration value %d", t)
+	return errors.Wrap(ErrRangeCheck, description)
 }

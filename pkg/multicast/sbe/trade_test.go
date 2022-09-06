@@ -2,19 +2,23 @@ package sbe
 
 import (
 	"bytes"
+	"io"
 	"math"
 	"reflect"
 	"testing"
 
 	"github.com/KyberNetwork/deribit-api/pkg/common"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 func TestDecodeTrade(t *testing.T) {
 	tests := []struct {
-		event    []byte
-		expected Trades
+		event          []byte
+		expectedOutput Trades
+		expectedError  error
 	}{
+		// success case, 2 for Perpetual and 1 for Option
 		{
 			[]byte{
 				0x04, 0x00, 0xea, 0x03, 0x01, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0x00, 0x48, 0x37, 0x03, 0x00,
@@ -45,6 +49,7 @@ func TestDecodeTrade(t *testing.T) {
 					},
 				},
 			},
+			nil,
 		},
 		{
 			[]byte{
@@ -96,6 +101,7 @@ func TestDecodeTrade(t *testing.T) {
 					},
 				},
 			},
+			nil,
 		},
 		{
 			[]byte{
@@ -127,10 +133,33 @@ func TestDecodeTrade(t *testing.T) {
 					},
 				},
 			},
+			nil,
+		},
+		// failure case
+		{
+			[]byte{
+				0x04, 0x00, 0xea, 0x03, 0x01, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0x00, 0x0b, 0x7c,
+			},
+			Trades{},
+			io.ErrUnexpectedEOF,
+		},
+		{
+			[]byte{
+				0x04, 0x00, 0xea, 0x03, 0x01, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0x00, 0x48, 0x37, 0x03, 0x00,
+				0x53, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x9a, 0x99, 0x99, 0x99, 0x99, 0xe3, 0x99,
+				0x40, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xa6, 0x40, 0xc6, 0x17, 0xfd, 0x11, 0x83, 0x01, 0x00,
+				0x00, 0x1f, 0x85, 0xeb, 0x51, 0xb8, 0xe2, 0x99, 0x40, 0x1f, 0x85, 0xeb, 0x51, 0xb8, 0xe7, 0x99,
+				0x40, 0xf6, 0xbe, 0x4d, 0x06, 0x00, 0x00, 0x00, 0x00, 0x5b, 0xa2, 0x84, 0x08, 0x00, 0x00, 0x00,
+				0x00, 0x0a, 0x00, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x00, 0x00, 0x00, 0x00, 0x00,
+				0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x85,
+			},
+			Trades{},
+			ErrRangeCheck,
 		},
 	}
 
 	marshaller := NewSbeGoMarshaller()
+	tradePtr := reflect.TypeOf(&TradesTradesList{})
 
 	for _, test := range tests {
 		bufferData := bytes.NewBuffer(test.event)
@@ -140,19 +169,20 @@ func TestDecodeTrade(t *testing.T) {
 		require.NoError(t, err)
 
 		var trades Trades
-		err = trades.Decode(marshaller, bufferData, header.BlockLength, false)
-		require.NoError(t, err)
+		err = trades.Decode(marshaller, bufferData, header.BlockLength, true)
+		require.ErrorIs(t, err, test.expectedError)
 
-		// replace NaN to 0 of output and expected output
-		for i := 0; i < len(trades.TradesList); i++ {
-			common.ReplaceNaNValueOfStruct(&trades.TradesList[i], reflect.TypeOf(&TradesTradesList{}))
+		if err == nil {
+			// replace NaN to 0 of output and expected output
+			for i := 0; i < len(trades.TradesList); i++ {
+				common.ReplaceNaNValueOfStruct(&trades.TradesList[i], tradePtr)
+			}
+
+			for i := 0; i < len(test.expectedOutput.TradesList); i++ {
+				common.ReplaceNaNValueOfStruct(&test.expectedOutput.TradesList[i], tradePtr)
+			}
+
+			assert.Equal(t, trades, test.expectedOutput)
 		}
-
-		for i := 0; i < len(test.expected.TradesList); i++ {
-			common.ReplaceNaNValueOfStruct(&test.expected.TradesList[i], reflect.TypeOf(&TradesTradesList{}))
-		}
-
-		require.Equal(t, trades, test.expected)
-
 	}
 }
