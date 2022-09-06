@@ -13,7 +13,6 @@ func ReplaceNaNValueOfStruct(v interface{}, typeOfV reflect.Type) {
 	LogV := LogP.Elem()
 
 	if LogV.Kind() == reflect.Struct {
-
 		for i := 0; i < LogV.NumField(); i++ {
 			field := LogV.Field(i)
 			kind := field.Kind()
