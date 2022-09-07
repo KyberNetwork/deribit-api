@@ -41,13 +41,6 @@ func (p PeriodEnum) String() string {
 	}
 }
 
-func (p PeriodEnum) Encode(_m *SbeGoMarshaller, _w io.Writer) error {
-	if err := _m.WriteUint8(_w, uint8(p)); err != nil {
-		return err
-	}
-	return nil
-}
-
 func (p *PeriodEnum) Decode(_m *SbeGoMarshaller, _r io.Reader) error {
 	if err := _m.ReadUint8(_r, (*uint8)(p)); err != nil {
 		return err
