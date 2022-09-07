@@ -168,6 +168,9 @@ func TestDecodeTrade(t *testing.T) {
 		err := header.Decode(marshaller, bufferData)
 		require.NoError(t, err)
 
+		err = header.RangeCheck()
+		require.NoError(t, err)
+
 		var trades Trades
 		err = trades.Decode(marshaller, bufferData, header.BlockLength, true)
 		require.ErrorIs(t, err, test.expectedError)
