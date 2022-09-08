@@ -153,6 +153,8 @@ func (ts *PoolTestSuite) TestPutGet() {
 	getInstrument := ts.p.Get()
 	getBook := ts.p.Get()
 
+	emptyData := ts.p.Get()
+
 	assert.Equal(answer, getAnswer)
 	assert.Equal(question, getQuestion)
 	assert.Equal(world, getWorld)
@@ -162,4 +164,5 @@ func (ts *PoolTestSuite) TestPutGet() {
 	assert.Equal(snapshotEvent, getSnapshot)
 	assert.Equal(instrumentEvent, getInstrument)
 	assert.Equal(bookEvent, getBook)
+	assert.Equal(emptyData, make(Bytes, ts.p.maxPacketSize))
 }

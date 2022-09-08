@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"io/ioutil"
 	"math"
 	"reflect"
@@ -409,4 +410,142 @@ func (ts *MulticastTestSuite) TestDecodeTickerEvent() {
 
 	require.Equal(expectOutPut.Type, eventDecoded.Type)
 	require.Equal(expectedData, outputData)
+}
+
+func (ts *MulticastTestSuite) TestDecodeEvent() {
+	assert := ts.Assert()
+
+	tests := []struct {
+		event       []byte
+		expectError error
+	}{
+		{
+			[]byte{
+				0x8c, 0x00, 0xe8, 0x03, 0x01, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x00,
+			},
+			io.EOF, // decodeInstrument
+		},
+		{
+			[]byte{
+				0x1d, 0x00, 0xe9, 0x03, 0x01, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0x00,
+			},
+			io.EOF, // decodeOrderbook
+		},
+		{
+			[]byte{
+				0x04, 0x00, 0xea, 0x03, 0x01, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0x00,
+			},
+			io.EOF, // decodeTrade
+		},
+		{
+			[]byte{
+				0x85, 0x00, 0xeb, 0x03, 0x01, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00,
+			},
+			io.EOF, // decodeTicker
+		},
+		{
+			[]byte{
+				0x8c, 0x00, 0xe8, 0x04, 0x01, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x00,
+			},
+			ErrUnsupportedTemplateID,
+		},
+	}
+
+	for _, test := range tests {
+		bufferData := bytes.NewBuffer(test.event)
+
+		var header sbe.MessageHeader
+		err := header.Decode(ts.m, bufferData)
+		assert.NoError(err)
+
+		decodedEvent, err := ts.c.decodeEvent(ts.m, bufferData, header)
+		assert.ErrorIs(err, test.expectError)
+		assert.Nil(decodedEvent.Data)
+
+	}
+}
+
+func (ts *MulticastTestSuite) TestDecodeEvents() {
+	assert := ts.Assert()
+	_ = assert
+
+	tests := []struct {
+		event          []byte
+		expectedOutput []Event
+		expectError    error
+	}{
+		{
+			[]byte{
+				0x8c, 0x00, 0xe8, 0x03, 0x01, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x00,
+			},
+			nil,
+			io.EOF, // decodeInstrument
+		},
+		{
+			[]byte{
+				0x1d, 0x00, 0xe9, 0x03, 0x01, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0x00,
+			},
+			nil,
+			io.EOF, // decodeOrderbook
+		},
+		{
+			[]byte{},
+			nil,
+			nil,
+		},
+		{
+			[]byte{
+				0x1d, 0x00, 0xe9, 0x03, 0x01, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0x00, 0x96, 0x37, 0x03, 0x00,
+				0x77, 0xc4, 0x15, 0x0d, 0x83, 0x01, 0x00, 0x00, 0x3c, 0x25, 0x7a, 0x7f, 0x0b, 0x00, 0x00, 0x00,
+				0x3d, 0x25, 0x7a, 0x7f, 0x0b, 0x00, 0x00, 0x00, 0x01, 0x12, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00,
+				0x00, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x60, 0x4e, 0xd3, 0x40, 0x00, 0x00, 0x00, 0x00, 0xc0,
+				0x4f, 0xed, 0x40,
+			},
+			[]Event{
+				{
+					Type: EventTypeOrderBook,
+					Data: models.OrderBookRawNotification{
+						Timestamp:      1662371873911,
+						InstrumentName: "BTC-PERPETUAL",
+						PrevChangeID:   49383351612,
+						ChangeID:       49383351613,
+						Bids: []models.OrderBookNotificationItem{
+							{
+								Action: "change",
+								Price:  19769.5,
+								Amount: 60030,
+							},
+						},
+					},
+				},
+			},
+			nil,
+		},
+	}
+
+	for _, test := range tests {
+		bufferData := bytes.NewBuffer(test.event)
+
+		decodedEvent, err := ts.c.decodeEvents(ts.m, bufferData)
+		assert.ErrorIs(err, test.expectError)
+		_ = decodedEvent
+		// assert.Nil(decodedEvent.Data)
+
+	}
+}
+
+func (ts *MulticastTestSuite) TestReadPackageHeader() {
+	require := ts.Require()
+	header := []byte{
+		0x8c, 0x00, 0xe8, 0x03, 0x01, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x00,
+	}
+	n, channelID, seq, err := readPackageHeader(bytes.NewBuffer(header))
+	require.NoError(err)
+	require.Equal(n, uint16(140))
+	require.Equal(channelID, uint16(1000))
+	require.Equal(seq, uint32(65537))
+
+	_, _, _, err = readPackageHeader(&bytes.Buffer{})
+	require.ErrorIs(err, io.EOF)
+
 }
