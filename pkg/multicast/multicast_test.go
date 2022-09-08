@@ -22,11 +22,6 @@ const (
 )
 
 var (
-	ifname     = "not-exits-ifname"
-	ipAddrs    = []string{"239.111.111.1", "239.111.111.2", "239.111.111.3"}
-	port       = 6100
-	currencies = []string{"BTC", "ETH"}
-
 	errInvalidParam = errors.New("invalid params")
 )
 
@@ -78,6 +73,12 @@ func TestMulticastTestSuite(t *testing.T) {
 
 func (ts *MulticastTestSuite) SetupSuite() {
 	require := ts.Require()
+	var (
+		ifname     = "not-exits-ifname"
+		ipAddrs    = []string{"239.111.111.1", "239.111.111.2", "239.111.111.3"}
+		port       = 6100
+		currencies = []string{"BTC", "ETH"}
+	)
 
 	m := sbe.NewSbeGoMarshaller()
 	// Error case
@@ -155,7 +156,7 @@ func (ts *MulticastTestSuite) TestEventEmitter() {
 	channel := "test.EventEmitter"
 	receiveTimes := 0
 	consumer := func(s string) {
-		receiveTimes += 1
+		receiveTimes++
 		require.Equal(s, event)
 
 	}
@@ -336,6 +337,7 @@ func (ts *MulticastTestSuite) TestDecodeTradesEvent() {
 	require.Equal(expectOutPut, eventDecoded)
 }
 
+// nolint:funlen
 func (ts *MulticastTestSuite) TestDecodeTickerEvent() {
 	require := ts.Require()
 
