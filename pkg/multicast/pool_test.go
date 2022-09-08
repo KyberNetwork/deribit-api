@@ -19,6 +19,7 @@ func (ts *PoolTestSuite) SetupSuite() {
 	ts.p = NewPool(1500)
 }
 
+// nolint:funlen
 func (ts *PoolTestSuite) TestPutGet() {
 	assert := ts.Assert()
 
@@ -137,7 +138,7 @@ func (ts *PoolTestSuite) TestPutGet() {
 	ts.p.Put(question)
 	ts.p.Put(answer)
 
-	getAnwser := ts.p.Get()
+	getAnswer := ts.p.Get()
 	getQuestion := ts.p.Get()
 	getWorld := ts.p.Get()
 	getHello := ts.p.Get()
@@ -152,7 +153,7 @@ func (ts *PoolTestSuite) TestPutGet() {
 	getInstrument := ts.p.Get()
 	getBook := ts.p.Get()
 
-	assert.Equal(answer, getAnwser)
+	assert.Equal(answer, getAnswer)
 	assert.Equal(question, getQuestion)
 	assert.Equal(world, getWorld)
 	assert.Equal(hello, getHello)

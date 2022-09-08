@@ -13,7 +13,6 @@ import (
 
 	"github.com/KyberNetwork/deribit-api/pkg/models"
 	"github.com/KyberNetwork/deribit-api/pkg/multicast/sbe"
-	"github.com/KyberNetwork/deribit-api/pkg/websocket"
 	"github.com/chuckpreslar/emission"
 	"go.uber.org/zap"
 	"golang.org/x/net/ipv4"
@@ -65,7 +64,7 @@ func NewClient(
 	ifname string,
 	ipAddrs []string,
 	port int,
-	wsClient *websocket.Client,
+	instrumentsGetter InstrumentsGetter,
 	currencies []string,
 ) (client *Client, err error) {
 	log := zap.S()
@@ -84,7 +83,7 @@ func NewClient(
 		inf:               inf,
 		ipAddrs:           ipAddrs,
 		port:              port,
-		instrumentsGetter: wsClient,
+		instrumentsGetter: instrumentsGetter,
 
 		supportCurrencies: currencies,
 		instrumentsMap:    make(map[uint32]models.Instrument),
