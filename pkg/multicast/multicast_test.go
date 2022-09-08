@@ -21,9 +21,7 @@ const (
 	instrumentsFilePath = "mock/instruments.json"
 )
 
-var (
-	errInvalidParam = errors.New("invalid params")
-)
+var errInvalidParam = errors.New("invalid params")
 
 type MockInstrumentsGetter struct{}
 
@@ -158,8 +156,8 @@ func (ts *MulticastTestSuite) TestEventEmitter() {
 	consumer := func(s string) {
 		receiveTimes++
 		require.Equal(s, event)
-
 	}
+
 	ts.c.On(channel, consumer)
 	ts.c.Emit(channel, event)
 	ts.c.Off(channel, consumer)
