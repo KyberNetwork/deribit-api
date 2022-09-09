@@ -8,14 +8,17 @@ import (
 	"io"
 	"io/ioutil"
 	"math"
+	"net"
 	"reflect"
 	"sort"
 	"testing"
+	"time"
 
 	"github.com/KyberNetwork/deribit-api/pkg/common"
 	"github.com/KyberNetwork/deribit-api/pkg/models"
 	"github.com/KyberNetwork/deribit-api/pkg/multicast/sbe"
 	"github.com/stretchr/testify/suite"
+	"golang.org/x/net/ipv4"
 )
 
 const (
@@ -80,13 +83,14 @@ func (ts *MulticastTestSuite) SetupSuite() {
 	)
 
 	m := sbe.NewSbeGoMarshaller()
+
 	// Error case
 	client, err := NewClient(ifname, ipAddrs, port, &MockInstrumentsGetter{}, currencies)
 	require.Error(err)
 	require.Nil(client)
 
 	// Success case
-	client, err = NewClient("", ipAddrs, port, &MockInstrumentsGetter{}, currencies)
+	client, err = NewClient("lo0", ipAddrs, port, &MockInstrumentsGetter{}, currencies)
 	require.NoError(err)
 	require.NotNil(client)
 
@@ -229,54 +233,99 @@ func (ts *MulticastTestSuite) TestDecodeInstrumentEvent() {
 	require.Equal(events, expectOutPut)
 }
 
+// nolint:funlen
 func (ts *MulticastTestSuite) TestDecodeOrderbookEvent() {
 	require := ts.Require()
 
-	event := []byte{
-		0x1d, 0x00, 0xe9, 0x03, 0x01, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0x00, 0x96, 0x37, 0x03, 0x00,
-		0x77, 0xc4, 0x15, 0x0d, 0x83, 0x01, 0x00, 0x00, 0x3c, 0x25, 0x7a, 0x7f, 0x0b, 0x00, 0x00, 0x00,
-		0x3d, 0x25, 0x7a, 0x7f, 0x0b, 0x00, 0x00, 0x00, 0x01, 0x12, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00,
-		0x00, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x60, 0x4e, 0xd3, 0x40, 0x00, 0x00, 0x00, 0x00, 0xc0,
-		0x4f, 0xed, 0x40,
-	}
-
-	expectedHeader := sbe.MessageHeader{
-		BlockLength:      29,
-		TemplateId:       1001,
-		SchemaId:         1,
-		Version:          1,
-		NumGroups:        1,
-		NumVarDataFields: 0,
-	}
-
-	expectOutPut := Event{
-		Type: EventTypeOrderBook,
-		Data: models.OrderBookRawNotification{
-			Timestamp:      1662371873911,
-			InstrumentName: "BTC-PERPETUAL",
-			PrevChangeID:   49383351612,
-			ChangeID:       49383351613,
-			Bids: []models.OrderBookNotificationItem{
-				{
-					Action: "change",
-					Price:  19769.5,
-					Amount: 60030,
+	tests := []struct {
+		event          []byte
+		expectedHeader sbe.MessageHeader
+		expectedOutput Event
+		expectedError  error
+	}{
+		{
+			[]byte{
+				0x1d, 0x00, 0xe9, 0x03, 0x01, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0x00, 0x96, 0x37, 0x03, 0x00,
+				0x77, 0xc4, 0x15, 0x0d, 0x83, 0x01, 0x00, 0x00, 0x3c, 0x25, 0x7a, 0x7f, 0x0b, 0x00, 0x00, 0x00,
+				0x3d, 0x25, 0x7a, 0x7f, 0x0b, 0x00, 0x00, 0x00, 0x01, 0x12, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00,
+				0x00, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x60, 0x4e, 0xd3, 0x40, 0x00, 0x00, 0x00, 0x00, 0xc0,
+				0x4f, 0xed, 0x40,
+			},
+			sbe.MessageHeader{
+				BlockLength:      29,
+				TemplateId:       1001,
+				SchemaId:         1,
+				Version:          1,
+				NumGroups:        1,
+				NumVarDataFields: 0,
+			},
+			Event{
+				Type: EventTypeOrderBook,
+				Data: models.OrderBookRawNotification{
+					Timestamp:      1662371873911,
+					InstrumentName: "BTC-PERPETUAL",
+					PrevChangeID:   49383351612,
+					ChangeID:       49383351613,
+					Bids: []models.OrderBookNotificationItem{
+						{
+							Action: "change",
+							Price:  19769.5,
+							Amount: 60030,
+						},
+					},
 				},
 			},
+			nil,
+		},
+		{
+			[]byte{
+				0x1d, 0x00, 0xe9, 0x03, 0x01, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0x00, 0x96, 0x37, 0x03, 0x00,
+				0x77, 0xc4, 0x15, 0x0d, 0x83, 0x01, 0x00, 0x00, 0x3c, 0x25, 0x7a, 0x7f, 0x0b, 0x00, 0x00, 0x00,
+				0x3d, 0x25, 0x7a, 0x7f, 0x0b, 0x00, 0x00, 0x00, 0x01, 0x12, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00,
+				0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x60, 0x4e, 0xd3, 0x40, 0x00, 0x00, 0x00, 0x00, 0xc0,
+				0x4f, 0xed, 0x40,
+			},
+			sbe.MessageHeader{
+				BlockLength:      29,
+				TemplateId:       1001,
+				SchemaId:         1,
+				Version:          1,
+				NumGroups:        1,
+				NumVarDataFields: 0,
+			},
+			Event{
+				Type: EventTypeOrderBook,
+				Data: models.OrderBookRawNotification{
+					Timestamp:      1662371873911,
+					InstrumentName: "BTC-PERPETUAL",
+					PrevChangeID:   49383351612,
+					ChangeID:       49383351613,
+					Asks: []models.OrderBookNotificationItem{
+						{
+							Action: "change",
+							Price:  19769.5,
+							Amount: 60030,
+						},
+					},
+				},
+			},
+			nil,
 		},
 	}
 
-	bufferData := bytes.NewBuffer(event)
+	for _, test := range tests {
+		bufferData := bytes.NewBuffer(test.event)
 
-	var header sbe.MessageHeader
-	err := header.Decode(ts.m, bufferData)
-	require.NoError(err)
-	require.Equal(header, expectedHeader)
+		var header sbe.MessageHeader
+		err := header.Decode(ts.m, bufferData)
+		require.NoError(err)
+		require.Equal(header, test.expectedHeader)
 
-	eventDecoded, err := ts.c.decodeOrderBookEvent(ts.m, bufferData, header)
+		eventDecoded, err := ts.c.decodeOrderBookEvent(ts.m, bufferData, header)
 
-	require.NoError(err)
-	require.Equal(expectOutPut, eventDecoded)
+		require.ErrorIs(err, test.expectedError)
+		require.Equal(test.expectedOutput, eventDecoded)
+	}
 }
 
 func (ts *MulticastTestSuite) TestDecodeTradesEvent() {
@@ -549,4 +598,304 @@ func (ts *MulticastTestSuite) TestReadPackageHeader() {
 	require.Equal(n, uint16(0))
 	require.Equal(channelID, uint16(0))
 	require.Equal(seq, uint32(0))
+}
+
+func (ts *MulticastTestSuite) TestHandlePackageHeader() {
+	// func (c *Client) handlePackageHeader(reader io.Reader, chanelIDSeq map[uint16]uint32) error {
+	tests := []struct {
+		event       []byte
+		chanelIDSeq map[uint16]uint32
+		expectError error
+	}{
+		{
+			[]byte{},
+			nil,
+			io.EOF,
+		},
+		{
+			[]byte{
+				0x1d, 0x00, 0xe9, 0x03, 0x01, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0x00,
+			},
+			map[uint16]uint32{1001: 65537},
+			ErrDuplicatedPackage,
+		},
+		{
+			[]byte{
+				0x1d, 0x00, 0xe9, 0x03, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00,
+			},
+			map[uint16]uint32{1001: 65537},
+			ErrConnectionReset,
+		},
+		{
+			[]byte{
+				0x1d, 0x00, 0xe9, 0x03, 0x01, 0x00, 0x01, 0x02, 0x01, 0x00, 0x00, 0x00,
+			},
+			map[uint16]uint32{1001: 65537},
+			nil,
+		},
+	}
+
+	for _, test := range tests {
+		err := ts.c.handlePackageHeader(bytes.NewBuffer(test.event), test.chanelIDSeq)
+		ts.Assert().ErrorIs(err, test.expectError)
+	}
+}
+
+// nolint:funlen
+func (ts *MulticastTestSuite) TestEmitEvents() {
+	events := []Event{
+		{
+			Type: EventTypeInstrument,
+			Data: models.Instrument{
+				TickSize:             0.0005,
+				TakerCommission:      0.0003,
+				SettlementPeriod:     "month",
+				QuoteCurrency:        "ETH",
+				MinTradeAmount:       1,
+				MakerCommission:      0.0003,
+				Leverage:             0,
+				Kind:                 "option",
+				IsActive:             true,
+				InstrumentID:         210762,
+				InstrumentName:       "ETH-31MAR23-3500-P",
+				ExpirationTimestamp:  1680249600000,
+				CreationTimestamp:    1648108860000,
+				ContractSize:         1,
+				BaseCurrency:         "ETH",
+				BlockTradeCommission: 0.0003,
+				OptionType:           "put",
+				Strike:               3500,
+			},
+		},
+		{
+			Type: EventTypeOrderBook,
+			Data: models.OrderBookRawNotification{
+				Timestamp:      1662371873911,
+				InstrumentName: "BTC-PERPETUAL",
+				PrevChangeID:   49383351612,
+				ChangeID:       49383351613,
+				Bids: []models.OrderBookNotificationItem{
+					{
+						Action: "change",
+						Price:  19769.5,
+						Amount: 60030,
+					},
+				},
+			},
+		},
+		{
+			Type: EventTypeTrades,
+			Data: models.TradesNotification{
+				{
+					Amount:         0.2,
+					BlockTradeID:   "0",
+					Direction:      "sell",
+					IndexPrice:     19164.79,
+					InstrumentName: "BTC-9SEP22-20000-C",
+					InstrumentKind: "option",
+					IV:             59.16,
+					Liquidation:    "none",
+					MarkPrice:      0.00127624,
+					Price:          0.001,
+					TickDirection:  3,
+					Timestamp:      1662630736813,
+					TradeID:        "228534710",
+					TradeSeq:       1498,
+				},
+			},
+		},
+		{
+			Type: EventTypeTicker,
+			Data: models.TickerNotification{
+				Timestamp:       1662519695815,
+				Stats:           models.Stats{},
+				State:           "open",
+				SettlementPrice: 23.431957,
+				OpenInterest:    31,
+				MinPrice:        25.351,
+				MaxPrice:        26.9805,
+				MarkPrice:       26.1415,
+				LastPrice:       10.8155,
+				InstrumentName:  "ETH-30SEP22-40000-P",
+				IndexPrice:      1497.93,
+				Funding8H:       math.NaN(),
+				CurrentFunding:  math.NaN(),
+				BestBidPrice:    nil,
+				BestBidAmount:   0,
+				BestAskPrice:    nil,
+				BestAskAmount:   0,
+			},
+		},
+	}
+	ts.c.emitEvents(events)
+}
+
+func (ts *MulticastTestSuite) TestHandleUDPPackage() {
+	tests := []struct {
+		data          []byte
+		expectedError error
+	}{
+		{
+			[]byte{},
+			io.EOF,
+		},
+		{
+			[]byte{
+				0x1d, 0x00, 0xe9, 0x03, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0xb0, 0x3b, 0x03, 0x00,
+				0x17, 0xeb, 0x3a, 0x20, 0x83, 0x01, 0x00, 0x00, 0x10, 0xf1, 0x85, 0x86, 0x0b, 0x00, 0x00, 0x00,
+				0x26, 0xf1, 0x85, 0x86, 0x0b, 0x00, 0x00, 0x00, 0x01, 0x12, 0x00, 0x02, 0x00, 0x00, 0x00, 0x00,
+				0x00, 0x01, 0x02, 0x00, 0x00, 0x00, 0x00, 0x80, 0xf2, 0xd2, 0x40, 0x00, 0x00, 0x00, 0x00, 0x00,
+				0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0xa0, 0xf2, 0xd2, 0x40, 0x00, 0x00, 0x00,
+				0x00, 0x00, 0xce, 0xd3, 0x40,
+			},
+			nil,
+		},
+		{
+			[]byte{
+				0x1d, 0x00, 0xe9, 0x03, 0x01, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0x00, 0xb0, 0x3b, 0x03, 0x00,
+				0x17, 0xeb, 0x3a, 0x20, 0x83, 0x01, 0x00, 0x00, 0x10, 0xf1, 0x85, 0x86, 0x0b, 0x00, 0x00, 0x00,
+				0x26, 0xf1, 0x85, 0x86, 0x0b, 0x00, 0x00, 0x00, 0x01, 0x12, 0x00, 0x02, 0x00, 0x00, 0x00, 0x00,
+				0x00, 0x01, 0x02, 0x00, 0x00, 0x00, 0x00, 0x80, 0xf2, 0xd2, 0x40, 0x00, 0x00, 0x00, 0x00, 0x00,
+				0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0xa0, 0xf2, 0xd2, 0x40, 0x00, 0x00, 0x00,
+				0x00, 0x00, 0xce, 0xd3, 0x40,
+			},
+			nil,
+		},
+	}
+
+	for _, test := range tests {
+		err := ts.c.handleUDPPackage(context.Background(), ts.m, map[uint16]uint32{1001: 65537}, test.data)
+		ts.Require().ErrorIs(err, test.expectedError)
+	}
+}
+
+func (ts *MulticastTestSuite) TestHandle() {
+	tests := []struct {
+		data          []byte
+		expectedError error
+	}{
+		{
+			[]byte{
+				0x1d, 0x00, 0xe9, 0x03, 0x01, 0x00, 0x01, 0x00, 0x1d, 0x00, 0xe9, 0x03, 0x01, 0x00, 0x01, 0x00,
+				0x01, 0x00, 0x00, 0x00, 0xb0, 0x3b, 0x03, 0x00, 0x17, 0xeb, 0x3a, 0x20, 0x83, 0x01, 0x00, 0x00,
+				0x10, 0xf1, 0x85, 0x86, 0x0b, 0x00, 0x00, 0x00, 0x26, 0xf1, 0x85, 0x86, 0x0b, 0x00, 0x00, 0x00,
+				0x01, 0x12, 0x00, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x02, 0x00, 0x00, 0x00, 0x00, 0x80,
+				0xf2, 0xd2, 0x40, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00,
+				0x00, 0xa0, 0xf2, 0xd2, 0x40, 0x00, 0x00, 0x00, 0x00, 0x00, 0xce, 0xd3, 0x40,
+			},
+			nil,
+		},
+		{
+			[]byte{
+				0x1d, 0x00, 0xe9, 0x03, 0x01, 0x00, 0x01, 0x00, 0x1d, 0x00, 0xe9, 0x03, 0x01, 0x00, 0x01, 0x00,
+				0x01, 0x00, 0x00, 0x00,
+			},
+			io.EOF,
+		},
+	}
+
+	for _, test := range tests {
+		err := ts.c.Handle(ts.m, bytes.NewBuffer(test.data), map[uint16]uint32{1000: 65536})
+		ts.Require().ErrorIs(err, test.expectedError)
+	}
+}
+
+func (ts *MulticastTestSuite) TestSetupConnection() {
+	ipGroups, err := ts.c.setupConnection()
+	expectedIpGroups := []net.IP{
+		net.ParseIP("239.111.111.1"), net.ParseIP("239.111.111.2"), net.ParseIP("239.111.111.3"),
+	}
+	ts.Require().NoError(err)
+	ts.Require().Equal(ipGroups, expectedIpGroups)
+}
+
+func setupIpv4Conn() (*ipv4.PacketConn, error) {
+	lc := net.ListenConfig{}
+	baseConn, err := lc.ListenPacket(context.Background(), "udp4", "0.0.0.0:3033")
+	if err != nil {
+		return nil, err
+	}
+
+	conn := ipv4.NewPacketConn(baseConn)
+	err = conn.SetControlMessage(ipv4.FlagDst, true)
+	if err != nil {
+		return nil, err
+	}
+
+	return conn, nil
+}
+
+func (ts *MulticastTestSuite) TestReadUDPMulticastPackage() {
+	require := ts.Require()
+
+	conn, err := setupIpv4Conn()
+	require.NoError(err)
+
+	testData := []byte("Hello World!")
+
+	n, err := conn.WriteTo(testData, nil, conn.LocalAddr())
+	require.NoError(err)
+
+	data := make([]byte, 1500)
+	res, err := readUDPMulticastPackage(conn, nil, data)
+	require.Nil(res)
+	require.Equal(data[:n], testData)
+	require.NoError(err)
+}
+
+func (ts *MulticastTestSuite) TestListenToEvents() {
+	group := net.ParseIP("239.111.111.1")
+	dst := &net.UDPAddr{IP: group, Port: ts.c.port}
+	err := ts.c.conn.SetMulticastInterface(ts.c.inf)
+	ts.Require().NoError(err)
+
+	numEvent := 0
+	ts.c.On("book.BTC-31MAR23", func(b *models.OrderBookRawNotification) {
+		numEvent++
+		ts.Require().Equal(b.InstrumentName, "BTC-31MAR23")
+	})
+	data := []byte{
+		0x18, 0x02, 0x03, 0x00, 0x9f, 0x5c, 0xc3, 0x0a,
+		0x1d, 0x00, 0xe9, 0x03, 0x01, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0x00, 0x37, 0x39, 0x03, 0x00,
+		0xc3, 0xf7, 0xde, 0x21, 0x83, 0x01, 0x00, 0x00, 0x2e, 0x93, 0x5f, 0x87, 0x0b, 0x00, 0x00, 0x00,
+		0x33, 0x93, 0x5f, 0x87, 0x0b, 0x00, 0x00, 0x00, 0x01, 0x12, 0x00, 0x02, 0x00, 0x00, 0x00, 0x00,
+		0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x20, 0x9e, 0xd4, 0x40, 0x00, 0x00, 0x00, 0x00, 0x00,
+		0x10, 0x8d, 0x40, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0xe0, 0x9e, 0xd4, 0x40, 0x00, 0x00, 0x00,
+		0x00, 0x00, 0x04, 0xaf, 0x40,
+	}
+
+	_, err = ts.c.conn.WriteTo(data, nil, dst)
+	ts.Require().NoError(err)
+
+	time.Sleep(100 * time.Millisecond)
+	ts.Require().Equal(numEvent, 1)
+}
+
+func (ts *MulticastTestSuite) TestStartStop() {
+	require := ts.Require()
+
+	err := ts.c.Start(context.Background())
+	require.NoError(err)
+
+	err = ts.wrongClient.Start(context.Background())
+	require.ErrorIs(err, errInvalidParam)
+
+	// wrong client with nil connection
+
+	err = ts.wrongClient.Stop()
+	require.Nil(ts.wrongClient.conn)
+	require.NoError(err)
+
+	// there is a connection in client
+	err = ts.c.Stop()
+	require.NotNil(ts.c.conn)
+	ts.Require().NoError(err)
+}
+
+func (ts *MulticastTestSuite) TestRestartConnection() {
+	err := ts.c.restartConnections(context.Background())
+	ts.Require().NoError(err)
+
+	err = ts.wrongClient.restartConnections(context.Background())
+	ts.Require().ErrorIs(err, errInvalidParam)
 }
