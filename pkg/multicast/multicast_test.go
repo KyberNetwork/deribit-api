@@ -802,11 +802,11 @@ func (ts *MulticastTestSuite) TestHandle() {
 
 func (ts *MulticastTestSuite) TestSetupConnection() {
 	ipGroups, err := ts.c.setupConnection()
-	expectedIpGroups := []net.IP{
+	expectedIPGroups := []net.IP{
 		net.ParseIP("239.111.111.1"), net.ParseIP("239.111.111.2"), net.ParseIP("239.111.111.3"),
 	}
 	ts.Require().NoError(err)
-	ts.Require().Equal(ipGroups, expectedIpGroups)
+	ts.Require().Equal(ipGroups, expectedIPGroups)
 }
 
 func setupIpv4Conn() (*ipv4.PacketConn, error) {
