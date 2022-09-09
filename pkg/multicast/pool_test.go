@@ -11,7 +11,7 @@ type PoolTestSuite struct {
 	p *Pool
 }
 
-func TestRamTestSuite(t *testing.T) {
+func TestPoolTestSuite(t *testing.T) {
 	suite.Run(t, new(PoolTestSuite))
 }
 
