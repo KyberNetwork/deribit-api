@@ -461,10 +461,10 @@ func (ts *MulticastTestSuite) TestDecodeEvent() {
 		decodedEvent, err := ts.c.decodeEvent(ts.m, bufferData, header)
 		assert.ErrorIs(err, test.expectError)
 		assert.Nil(decodedEvent.Data)
-
 	}
 }
 
+// nolint:funlen
 func (ts *MulticastTestSuite) TestDecodeEvents() {
 	assert := ts.Assert()
 	_ = assert
@@ -530,7 +530,6 @@ func (ts *MulticastTestSuite) TestDecodeEvents() {
 		assert.ErrorIs(err, test.expectError)
 		_ = decodedEvent
 		// assert.Nil(decodedEvent.Data)
-
 	}
 }
 
@@ -545,7 +544,9 @@ func (ts *MulticastTestSuite) TestReadPackageHeader() {
 	require.Equal(channelID, uint16(1000))
 	require.Equal(seq, uint32(65537))
 
-	_, _, _, err = readPackageHeader(&bytes.Buffer{})
+	n, channelID, seq, err = readPackageHeader(&bytes.Buffer{})
 	require.ErrorIs(err, io.EOF)
-
+	require.Equal(n, uint16(0))
+	require.Equal(channelID, uint16(0))
+	require.Equal(seq, uint32(0))
 }
