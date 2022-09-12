@@ -11,12 +11,14 @@ import (
 	"net"
 	"reflect"
 	"sort"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/KyberNetwork/deribit-api/pkg/common"
 	"github.com/KyberNetwork/deribit-api/pkg/models"
 	"github.com/KyberNetwork/deribit-api/pkg/multicast/sbe"
+	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 	"golang.org/x/net/ipv4"
 )
@@ -116,11 +118,29 @@ func (ts *MulticastTestSuite) SetupSuite() {
 		return allIns[i].InstrumentID < allIns[j].InstrumentID
 	})
 
+	testSetupConnection(client, require)
+
 	ts.c = client
 	ts.wrongClient = wrongClient
 	ts.m = m
 	ts.ins = allIns
 	ts.insMap = insMap
+}
+
+func testSetupConnection(c *Client, require *require.Assertions) {
+	mu := &sync.RWMutex{}
+	expectedIPGroups := []net.IP{
+		net.ParseIP("239.111.111.1"), net.ParseIP("239.111.111.2"), net.ParseIP("239.111.111.3"),
+	}
+
+	mu.Lock()
+	ipGroups, err := c.setupConnection()
+	mu.Unlock()
+	require.NoError(err)
+
+	mu.Lock()
+	require.Equal(ipGroups, expectedIPGroups)
+	mu.Unlock()
 }
 
 func (ts *MulticastTestSuite) TestGetAllInstruments() {
@@ -802,15 +822,6 @@ func (ts *MulticastTestSuite) TestHandle() {
 	}
 }
 
-func (ts *MulticastTestSuite) TestSetupConnection() {
-	ipGroups, err := ts.c.setupConnection()
-	expectedIPGroups := []net.IP{
-		net.ParseIP("239.111.111.1"), net.ParseIP("239.111.111.2"), net.ParseIP("239.111.111.3"),
-	}
-	ts.Require().NoError(err)
-	ts.Require().Equal(ipGroups, expectedIPGroups)
-}
-
 func setupIpv4Conn() (*ipv4.PacketConn, error) {
 	lc := net.ListenConfig{}
 	baseConn, err := lc.ListenPacket(context.Background(), "udp4", "0.0.0.0:3033")
@@ -846,15 +857,20 @@ func (ts *MulticastTestSuite) TestReadUDPMulticastPackage() {
 }
 
 func (ts *MulticastTestSuite) TestListenToEvents() {
+	require := ts.Require()
+	mu := &sync.RWMutex{}
+
 	group := net.ParseIP("239.111.111.1")
 	dst := &net.UDPAddr{IP: group, Port: ts.c.port}
 	err := ts.c.conn.SetMulticastInterface(ts.c.inf)
-	ts.Require().NoError(err)
+	require.NoError(err)
 
 	numEvent := 0
 	ts.c.On("book.BTC-31MAR23", func(b *models.OrderBookRawNotification) {
+		mu.Lock()
 		numEvent++
-		ts.Require().Equal(b.InstrumentName, "BTC-31MAR23")
+		mu.Unlock()
+		require.Equal(b.InstrumentName, "BTC-31MAR23")
 	})
 	data := []byte{
 		0x18, 0x02, 0x03, 0x00, 0x9f, 0x5c, 0xc3, 0x0a,
@@ -867,24 +883,19 @@ func (ts *MulticastTestSuite) TestListenToEvents() {
 	}
 
 	_, err = ts.c.conn.WriteTo(data, nil, dst)
-	ts.Require().NoError(err)
+	require.NoError(err)
 
 	time.Sleep(100 * time.Millisecond)
-	ts.Require().Equal(numEvent, 1)
+	mu.Lock()
+	require.Equal(numEvent, 1)
+	mu.Unlock()
 }
 
 func (ts *MulticastTestSuite) TestStartStop() {
 	require := ts.Require()
 
-	err := ts.c.Start(context.Background())
-	require.NoError(err)
-
-	err = ts.wrongClient.Start(context.Background())
-	require.ErrorIs(err, errInvalidParam)
-
 	// wrong client with nil connection
-
-	err = ts.wrongClient.Stop()
+	err := ts.wrongClient.Stop()
 	require.Nil(ts.wrongClient.conn)
 	require.NoError(err)
 
@@ -892,6 +903,12 @@ func (ts *MulticastTestSuite) TestStartStop() {
 	err = ts.c.Stop()
 	require.NotNil(ts.c.conn)
 	ts.Require().NoError(err)
+
+	err = ts.c.Start(context.Background())
+	require.NoError(err)
+
+	err = ts.wrongClient.Start(context.Background())
+	require.ErrorIs(err, errInvalidParam)
 }
 
 func (ts *MulticastTestSuite) TestRestartConnection() {
