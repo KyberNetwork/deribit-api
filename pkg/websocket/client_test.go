@@ -3,6 +3,7 @@ package websocket
 import (
 	"context"
 	"encoding/json"
+	"os"
 	"testing"
 
 	"github.com/KyberNetwork/deribit-api/pkg/models"
@@ -79,6 +80,10 @@ func (c *MockRPCConn) GetResult() interface{} {
 	return res
 }
 
+func addResult(conn JSONRPC2, res interface{}) {
+	conn.(*MockRPCConn).AddResult(res)
+}
+
 func newClient() *Client {
 	cfg := Configuration{
 		Addr:       TestBaseURL,
@@ -89,6 +94,18 @@ func newClient() *Client {
 	}
 
 	return New(zap.S(), &cfg)
+}
+
+var testClient *Client
+
+func TestMain(m *testing.M) {
+	testClient = newClient()
+	if err := testClient.Start(); err != nil {
+		panic(err)
+	}
+	defer testClient.Stop()
+
+	os.Exit(m.Run())
 }
 
 func TestStartStop(t *testing.T) {
@@ -107,9 +124,9 @@ func TestCall(t *testing.T) {
 
 	err = client.Start()
 	require.NoError(t, err)
+	addResult(client.rpcConn, &models.TestResponse{Version: "1.2.26"})
 
 	var testResp models.TestResponse
-	client.rpcConn.(*MockRPCConn).AddResult(&models.TestResponse{Version: "1.2.26"})
 	err = client.Call(context.Background(), "public/test", nil, &testResp)
 	if assert.NoError(t, err) {
 		assert.Equal(t, "1.2.26", testResp.Version)
@@ -286,14 +303,9 @@ func TestHandle(t *testing.T) {
 		},
 	}
 
-	client := newClient()
-	err := client.Start()
-	require.NoError(t, err)
-	defer client.Stop()
-
 	for _, test := range tests {
-		err = test.req.SetParams(test.params)
+		err := test.req.SetParams(test.params)
 		require.NoError(t, err)
-		client.Handle(context.Background(), nil, test.req)
+		testClient.Handle(context.Background(), nil, test.req)
 	}
 }
