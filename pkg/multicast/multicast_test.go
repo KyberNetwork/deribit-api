@@ -90,7 +90,9 @@ func (ts *MulticastTestSuite) SetupSuite() {
 	require.Nil(client)
 
 	// Success case
-	client, err = NewClient("en0", ipAddrs, port, &MockInstrumentsGetter{}, currencies)
+	ifi, err := net.InterfaceByIndex(1)
+	require.NoError(err)
+	client, err = NewClient(ifi.Name, ipAddrs, port, &MockInstrumentsGetter{}, currencies)
 	require.NoError(err)
 	require.NotNil(client)
 
