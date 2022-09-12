@@ -14,6 +14,10 @@ import (
 	"go.uber.org/zap"
 )
 
+const (
+	successResponse = "success"
+)
+
 type MockRPCConn struct {
 	addr         string
 	handler      jsonrpc2.Handler
@@ -96,6 +100,7 @@ func newClient() *Client {
 	return New(zap.S(), &cfg)
 }
 
+// nolint:gochecknoglobals
 var testClient *Client
 
 func TestMain(m *testing.M) {
@@ -103,9 +108,12 @@ func TestMain(m *testing.M) {
 	if err := testClient.Start(); err != nil {
 		panic(err)
 	}
-	defer testClient.Stop()
 
-	os.Exit(m.Run())
+	retCode := m.Run()
+
+	testClient.Stop()
+
+	os.Exit(retCode)
 }
 
 func TestStartStop(t *testing.T) {

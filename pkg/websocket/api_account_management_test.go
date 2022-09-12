@@ -62,7 +62,7 @@ func TestCreateSubaccount(t *testing.T) {
 }
 
 func TestDisableTfaForSubaccount(t *testing.T) {
-	addResult(testClient.rpcConn, "success")
+	addResult(testClient.rpcConn, successResponse)
 
 	res, err := testClient.DisableTfaForSubaccount(
 		context.Background(),
@@ -71,7 +71,7 @@ func TestDisableTfaForSubaccount(t *testing.T) {
 		},
 	)
 	if assert.NoError(t, err) {
-		assert.Equal(t, "success", res)
+		assert.Equal(t, successResponse, res)
 	}
 }
 
@@ -225,7 +225,7 @@ func TestGetSubaccounts(t *testing.T) {
 }
 
 func TestSetAnnouncementAsRead(t *testing.T) {
-	expect := "success"
+	expect := successResponse
 	addResult(testClient.rpcConn, &expect)
 
 	res, err := testClient.SetAnnouncementAsRead(
@@ -240,7 +240,7 @@ func TestSetAnnouncementAsRead(t *testing.T) {
 }
 
 func TestSetEmailForSubaccount(t *testing.T) {
-	expect := "success"
+	expect := successResponse
 	addResult(testClient.rpcConn, &expect)
 
 	res, err := testClient.SetEmailForSubaccount(
@@ -256,7 +256,7 @@ func TestSetEmailForSubaccount(t *testing.T) {
 }
 
 func TestSetEmailLanguage(t *testing.T) {
-	expect := "success"
+	expect := successResponse
 	addResult(testClient.rpcConn, &expect)
 
 	res, err := testClient.SetEmailLanguage(
@@ -271,7 +271,7 @@ func TestSetEmailLanguage(t *testing.T) {
 }
 
 func TestSetPasswordForSubaccount(t *testing.T) {
-	expect := "success"
+	expect := successResponse
 	addResult(testClient.rpcConn, &expect)
 
 	res, err := testClient.SetPasswordForSubaccount(
@@ -287,7 +287,7 @@ func TestSetPasswordForSubaccount(t *testing.T) {
 }
 
 func TestToggleNotificationsFromSubaccount(t *testing.T) {
-	expect := "success"
+	expect := successResponse
 	addResult(testClient.rpcConn, &expect)
 
 	res, err := testClient.ToggleNotificationsFromSubaccount(
@@ -303,7 +303,7 @@ func TestToggleNotificationsFromSubaccount(t *testing.T) {
 }
 
 func TestToggleSubaccountLogin(t *testing.T) {
-	expect := "success"
+	expect := successResponse
 	addResult(testClient.rpcConn, &expect)
 
 	res, err := testClient.ToggleSubaccountLogin(
