@@ -17,7 +17,7 @@ type MockRPCConn struct {
 	addr         string
 	handler      jsonrpc2.Handler
 	disconnectCh chan struct{}
-	result       interface{}
+	results      []interface{}
 }
 
 func NewMockRCConn(ctx context.Context, addr string, h jsonrpc2.Handler) (JSONRPC2, error) {
@@ -25,6 +25,10 @@ func NewMockRCConn(ctx context.Context, addr string, h jsonrpc2.Handler) (JSONRP
 		addr:         addr,
 		handler:      h,
 		disconnectCh: make(chan struct{}),
+		results: []interface{}{
+			&models.AuthResponse{},
+			"success",
+		},
 	}, nil
 }
 
@@ -35,8 +39,12 @@ func (c *MockRPCConn) Call(
 	result interface{},
 	opt ...jsonrpc2.CallOption,
 ) error {
-	deepcopy.Copy(result, c.result)
-	return nil
+	res := c.GetResult()
+	if res == nil {
+		return nil
+	}
+
+	return deepcopy.Copy(result, res)
 }
 
 func (c *MockRPCConn) Notify(
@@ -55,6 +63,20 @@ func (c *MockRPCConn) Close() error {
 
 func (c *MockRPCConn) DisconnectNotify() <-chan struct{} {
 	return c.disconnectCh
+}
+
+func (c *MockRPCConn) AddResult(result interface{}) {
+	c.results = append(c.results, result)
+}
+
+func (c *MockRPCConn) GetResult() interface{} {
+	if len(c.results) == 0 {
+		return nil
+	}
+
+	res := c.results[0]
+	c.results = c.results[1:]
+	return res
 }
 
 func newClient() *Client {
@@ -87,13 +109,14 @@ func TestCall(t *testing.T) {
 	require.NoError(t, err)
 
 	var testResp models.TestResponse
-	client.rpcConn.(*MockRPCConn).result = &models.TestResponse{Version: "1.2.26"}
+	client.rpcConn.(*MockRPCConn).AddResult(&models.TestResponse{Version: "1.2.26"})
 	err = client.Call(context.Background(), "public/test", nil, &testResp)
 	if assert.NoError(t, err) {
 		assert.Equal(t, "1.2.26", testResp.Version)
 	}
 }
 
+// nolint:lll,funlen
 func TestHandle(t *testing.T) {
 	tests := []struct {
 		req    *jsonrpc2.Request
@@ -203,8 +226,8 @@ func TestHandle(t *testing.T) {
 				Method: "subscription",
 			},
 			params: Event{
-				Channel: "trades.BTC-PERPETUAL",
-				Data:    json.RawMessage("{}"),
+				Channel: "trades.BTC-PERPETUAL.100ms",
+				Data:    json.RawMessage("{ \"jsonrpc\": \"2.0\", \"method\": \"subscription\", \"params\": { \"channel\": \"trades.BTC-PERPETUAL.100ms\", \"data\": [ { \"trade_seq\": 81769518, \"trade_id\": \"119810484\", \"timestamp\": 1662957035112, \"tick_direction\": 2, \"price\": 21703, \"mark_price\": 21705.36, \"instrument_name\": \"BTC-PERPETUAL\", \"index_price\": 21711.76, \"direction\": \"sell\", \"amount\": 1000 } ] } }"),
 			},
 		},
 		{
@@ -212,8 +235,8 @@ func TestHandle(t *testing.T) {
 				Method: "subscription",
 			},
 			params: Event{
-				Channel: "user.changes",
-				Data:    json.RawMessage("{}"),
+				Channel: "user.changes.BTC-PERPETUAL.100ms",
+				Data:    json.RawMessage("{ \"jsonrpc\": \"2.0\", \"method\": \"subscription\", \"params\": { \"channel\": \"user.changes.BTC-PERPETUAL.100ms\", \"data\": { \"trades\": [ { \"trade_seq\": 81772419, \"trade_id\": \"119813642\", \"timestamp\": 1662964399064, \"tick_direction\": 0, \"state\": \"filled\", \"self_trade\": false, \"risk_reducing\": false, \"reduce_only\": false, \"profit_loss\": 0, \"price\": 21760.5, \"post_only\": false, \"order_type\": \"market\", \"order_id\": \"14228823973\", \"mmp\": false, \"matching_id\": null, \"mark_price\": 21758.49, \"liquidity\": \"T\", \"instrument_name\": \"BTC-PERPETUAL\", \"index_price\": 21755.39, \"fee_currency\": \"BTC\", \"fee\": 4.6e-7, \"direction\": \"buy\", \"api\": false, \"amount\": 20 }, { \"trade_seq\": 81772420, \"trade_id\": \"119813643\", \"timestamp\": 1662964399064, \"tick_direction\": 1, \"state\": \"filled\", \"self_trade\": false, \"risk_reducing\": false, \"reduce_only\": false, \"profit_loss\": 0, \"price\": 21760.5, \"post_only\": false, \"order_type\": \"market\", \"order_id\": \"14228823973\", \"mmp\": false, \"matching_id\": null, \"mark_price\": 21758.49, \"liquidity\": \"T\", \"instrument_name\": \"BTC-PERPETUAL\", \"index_price\": 21755.39, \"fee_currency\": \"BTC\", \"fee\": 0.00000184, \"direction\": \"buy\", \"api\": false, \"amount\": 80 } ], \"positions\": [ { \"total_profit_loss\": -4.24e-7, \"size_currency\": 0.004595907, \"size\": 100, \"settlement_price\": 21623.41, \"realized_profit_loss\": 0, \"realized_funding\": 0, \"open_orders_margin\": 0, \"mark_price\": 21758.49, \"maintenance_margin\": 0.00004596, \"leverage\": 50, \"kind\": \"future\", \"interest_value\": -9.458785481892445, \"instrument_name\": \"BTC-PERPETUAL\", \"initial_margin\": 0.000091919, \"index_price\": 21755.39, \"floating_profit_loss\": -4.24e-7, \"direction\": \"buy\", \"delta\": 0.004595907, \"average_price\": 21760.5 } ], \"orders\": [ { \"web\": true, \"time_in_force\": \"good_til_cancelled\", \"risk_reducing\": false, \"replaced\": false, \"reduce_only\": false, \"profit_loss\": 0, \"price\": 22084, \"post_only\": false, \"order_type\": \"market\", \"order_state\": \"filled\", \"order_id\": \"14228823973\", \"mmp\": false, \"max_show\": 100, \"last_update_timestamp\": 1662964399064, \"label\": \"\", \"is_liquidation\": false, \"instrument_name\": \"BTC-PERPETUAL\", \"filled_amount\": 100, \"direction\": \"buy\", \"creation_timestamp\": 1662964399064, \"commission\": 0.0000023, \"average_price\": 21760.5, \"api\": false, \"amount\": 100 } ], \"instrument_name\": \"BTC-PERPETUAL\" } } }"),
 			},
 		},
 		{
@@ -221,8 +244,8 @@ func TestHandle(t *testing.T) {
 				Method: "subscription",
 			},
 			params: Event{
-				Channel: "user.orders.BTC.raw",
-				Data:    json.RawMessage("{}"),
+				Channel: "user.orders.BTC-PERPETUAL.raw",
+				Data:    json.RawMessage("{ \"jsonrpc\": \"2.0\", \"method\": \"subscription\", \"params\": { \"channel\": \"user.orders.BTC-PERPETUAL.raw\", \"data\": { \"web\": true, \"time_in_force\": \"good_til_cancelled\", \"risk_reducing\": false, \"replaced\": false, \"reduce_only\": false, \"profit_loss\": 0, \"price\": 22084, \"post_only\": false, \"order_type\": \"market\", \"order_state\": \"filled\", \"order_id\": \"14228823973\", \"mmp\": false, \"max_show\": 100, \"last_update_timestamp\": 1662964399064, \"label\": \"\", \"is_liquidation\": false, \"instrument_name\": \"BTC-PERPETUAL\", \"filled_amount\": 100, \"direction\": \"buy\", \"creation_timestamp\": 1662964399064, \"commission\": 0.0000023, \"average_price\": 21760.5, \"api\": false, \"amount\": 100 } } }"),
 			},
 		},
 		{
@@ -230,8 +253,8 @@ func TestHandle(t *testing.T) {
 				Method: "subscription",
 			},
 			params: Event{
-				Channel: "user.orders.BTC.100ms",
-				Data:    json.RawMessage("{}"),
+				Channel: "user.orders.BTC-PERPETUAL.100ms",
+				Data:    json.RawMessage("{ \"jsonrpc\": \"2.0\", \"method\": \"subscription\", \"params\": { \"channel\": \"user.orders.BTC-PERPETUAL.100ms\", \"data\": [ { \"web\": true, \"time_in_force\": \"good_til_cancelled\", \"risk_reducing\": false, \"replaced\": false, \"reduce_only\": false, \"profit_loss\": 0, \"price\": 22084, \"post_only\": false, \"order_type\": \"market\", \"order_state\": \"filled\", \"order_id\": \"14228823973\", \"mmp\": false, \"max_show\": 100, \"last_update_timestamp\": 1662964399064, \"label\": \"\", \"is_liquidation\": false, \"instrument_name\": \"BTC-PERPETUAL\", \"filled_amount\": 100, \"direction\": \"buy\", \"creation_timestamp\": 1662964399064, \"commission\": 0.0000023, \"average_price\": 21760.5, \"api\": false, \"amount\": 100 } ] } }"),
 			},
 		},
 		{
@@ -240,7 +263,7 @@ func TestHandle(t *testing.T) {
 			},
 			params: Event{
 				Channel: "user.portfolio.BTC",
-				Data:    json.RawMessage("{}"),
+				Data:    json.RawMessage("{ \"jsonrpc\": \"2.0\", \"method\": \"subscription\", \"params\": { \"channel\": \"user.portfolio.btc\", \"data\": { \"total_pl\": -107.54329243, \"session_upl\": 2.03600535, \"session_rpl\": 0, \"projected_maintenance_margin\": 104.88127092, \"projected_initial_margin\": 115.13608906, \"projected_delta_total\": 288.6408, \"portfolio_margining_enabled\": false, \"options_vega\": 2697.2679, \"options_value\": 6.43407021, \"options_theta\": -2177.2495, \"options_session_upl\": 0.54354297, \"options_session_rpl\": 0, \"options_pl\": 27.59762833, \"options_gamma\": 0.0043, \"options_delta\": -5.4052, \"margin_balance\": 6663.85236718, \"maintenance_margin\": 104.88127092, \"initial_margin\": 115.13608906, \"futures_session_upl\": 1.49246237, \"futures_session_rpl\": 0, \"futures_pl\": -135.14092076, \"fee_balance\": 0, \"estimated_liquidation_ratio_map\": { \"btc_usd\": 0.05449954798610861 }, \"estimated_liquidation_ratio\": 0.05449955, \"equity\": 6670.28643738, \"delta_total_map\": { \"btc_usd\": 300.48007431300005 }, \"delta_total\": 288.6408, \"currency\": \"BTC\", \"balance\": 6662.3599048, \"available_withdrawal_funds\": 6547.22381574, \"available_funds\": 6548.71627812 } } }"),
 			},
 		},
 		{
@@ -248,8 +271,8 @@ func TestHandle(t *testing.T) {
 				Method: "subscription",
 			},
 			params: Event{
-				Channel: "user.trades.BTC",
-				Data:    json.RawMessage("{}"),
+				Channel: "user.trades.BTC-PERPETUAL.100ms",
+				Data:    json.RawMessage("{ \"jsonrpc\": \"2.0\", \"method\": \"subscription\", \"params\": { \"channel\": \"user.trades.BTC-PERPETUAL.100ms\", \"data\": [ { \"trade_seq\": 81772419, \"trade_id\": \"119813642\", \"timestamp\": 1662964399064, \"tick_direction\": 0, \"state\": \"filled\", \"self_trade\": false, \"risk_reducing\": false, \"reduce_only\": false, \"profit_loss\": 0, \"price\": 21760.5, \"post_only\": false, \"order_type\": \"market\", \"order_id\": \"14228823973\", \"mmp\": false, \"matching_id\": null, \"mark_price\": 21758.49, \"liquidity\": \"T\", \"instrument_name\": \"BTC-PERPETUAL\", \"index_price\": 21755.39, \"fee_currency\": \"BTC\", \"fee\": 4.6e-7, \"direction\": \"buy\", \"api\": false, \"amount\": 20 }, { \"trade_seq\": 81772420, \"trade_id\": \"119813643\", \"timestamp\": 1662964399064, \"tick_direction\": 1, \"state\": \"filled\", \"self_trade\": false, \"risk_reducing\": false, \"reduce_only\": false, \"profit_loss\": 0, \"price\": 21760.5, \"post_only\": false, \"order_type\": \"market\", \"order_id\": \"14228823973\", \"mmp\": false, \"matching_id\": null, \"mark_price\": 21758.49, \"liquidity\": \"T\", \"instrument_name\": \"BTC-PERPETUAL\", \"index_price\": 21755.39, \"fee_currency\": \"BTC\", \"fee\": 0.00000184, \"direction\": \"buy\", \"api\": false, \"amount\": 80 } ] } }"),
 			},
 		},
 		{
@@ -258,7 +281,7 @@ func TestHandle(t *testing.T) {
 			},
 			params: Event{
 				Channel: "instrument.state.BTC",
-				Data:    json.RawMessage("{}"),
+				Data:    json.RawMessage("{ \"jsonrpc\": \"2.0\", \"method\": \"subscription\", \"params\": { \"channel\": \"instrument.state.any.BTC\", \"data\": { \"timestamp\": 1662970320027, \"state\": \"terminated\", \"instrument_name\": \"BTC-11SEP22-16000-P\" } } }"),
 			},
 		},
 	}
