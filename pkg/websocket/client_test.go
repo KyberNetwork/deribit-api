@@ -3,7 +3,6 @@ package websocket
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"os"
 	"testing"
 
@@ -50,11 +49,7 @@ func (c *MockRPCConn) Call(
 		return nil
 	}
 
-	err := deepcopy.Copy(result, res)
-	if err != nil {
-		fmt.Println("Fail unmarshal data:", res)
-	}
-	return err
+	return deepcopy.Copy(result, res)
 }
 
 func (c *MockRPCConn) Notify(
