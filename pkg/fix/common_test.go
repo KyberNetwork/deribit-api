@@ -161,7 +161,7 @@ func TestDecodeTimeInForce(t *testing.T) {
 	}
 }
 
-// nolint:funlen
+// nolint:funlen,lll
 func TestDecodeExecutionReport(t *testing.T) {
 	tests := []struct {
 		msg            string
