@@ -28,6 +28,11 @@ const (
 	subscriptionTypeTrades   = "trades"
 )
 
+type Initiator interface {
+	Start() error
+	Stop()
+}
+
 // Client implements the quickfix.Application interface.
 type Client struct {
 	log *zap.SugaredLogger
@@ -40,7 +45,7 @@ type Client struct {
 	targetCompID string
 	senderCompID string
 
-	initiator *quickfix.Initiator
+	initiator Initiator
 
 	mu           sync.Mutex
 	isConnected  bool
@@ -54,6 +59,13 @@ type Client struct {
 	subscriptionsMap map[string]bool
 	emitter          *emission.Emitter
 }
+
+type Dialer func(
+	app quickfix.Application,
+	storeFactory quickfix.MessageStoreFactory,
+	appSettings *quickfix.Settings,
+	logFactory quickfix.LogFactory,
+) (Initiator, error)
 
 // OnCreate implemented as part of Application interface.
 func (c *Client) OnCreate(_ quickfix.SessionID) {}
@@ -185,6 +197,7 @@ func New(
 	apiKey string,
 	secretKey string,
 	settings *quickfix.Settings,
+	dialer Dialer,
 ) (*Client, error) {
 	logger := zap.S()
 
@@ -223,7 +236,7 @@ func New(
 	// Init session and logon to deribit FIX API server.
 	logFactory := quickfix.NewNullLogFactory()
 
-	client.initiator, err = quickfix.NewInitiator(
+	client.initiator, err = dialer(
 		client,
 		quickfix.NewMemoryStoreFactory(),
 		settings,
