@@ -9,9 +9,8 @@ import (
 	"github.com/stretchr/testify/suite"
 )
 
-var (
-	mockInitiator Initiator
-)
+// nolint:gochecknoglobals
+var mockInitiator Initiator
 
 const (
 	apiKey    = "api_key"
@@ -100,7 +99,6 @@ func (ts *FixTestSuite) TestHandleSubscriptions() {
 		ts.c.handleSubscriptions(test.msgType, msg)
 		// if success, check the result in emit function (on - off)
 	}
-
 }
 
 func (ts *FixTestSuite) TestSend() {
@@ -109,7 +107,6 @@ func (ts *FixTestSuite) TestSend() {
 	waiter, err := ts.c.send(context.Background(), "id string", msg, wait)
 	_ = waiter
 	_ = err
-
 }
 
 func (ts *FixTestSuite) TestCall() {

@@ -85,28 +85,34 @@ func (i *MockInitiator) send(msg *quickfix.Message) {
 		}
 	} else {
 		for sessionID := range i.sessionSettings {
-			i.app.ToApp(msg, sessionID)
+			err := i.app.ToApp(msg, sessionID)
+			if err != nil {
+				return
+			}
 		}
 	}
 }
 
 // Receive receives message from counterparty (Deribit Server)
-func (i *MockInitiator) receive(msg *quickfix.Message) {
-	msgType, err := msg.Header.GetBytes(tag.MsgType)
-	if err != nil {
-		return
-	}
+// func (i *MockInitiator) receive(msg *quickfix.Message) {
+// 	msgType, err := msg.Header.GetBytes(tag.MsgType)
+// 	if err != nil {
+// 		return
+// 	}
 
-	if isAdminMessageType(msgType) {
-		for sessionID := range i.sessionSettings {
-			i.app.ToAdmin(msg, sessionID)
-		}
-	} else {
-		for sessionID := range i.sessionSettings {
-			i.app.ToApp(msg, sessionID)
-		}
-	}
-}
+// 	if isAdminMessageType(msgType) {
+// 		for sessionID := range i.sessionSettings {
+// 			i.app.ToAdmin(msg, sessionID)
+// 		}
+// 	} else {
+// 		for sessionID := range i.sessionSettings {
+// 			err := i.app.ToApp(msg, sessionID)
+// 			if err != nil {
+// 				return
+// 			}
+// 		}
+// 	}
+// }
 
 func mockSender(m quickfix.Messagable) (err error) {
 	initiator := mockInitiator.(*MockInitiator)
@@ -114,6 +120,7 @@ func mockSender(m quickfix.Messagable) (err error) {
 	return nil
 }
 
+// nolint:gochecknoglobals
 var (
 	msgTypeHeartbeat     = []byte("0")
 	msgTypeLogon         = []byte("A")
@@ -124,7 +131,7 @@ var (
 	msgTypeLogout        = []byte("5")
 )
 
-//isAdminMessageType returns true if the message type is a session level message.
+// isAdminMessageType returns true if the message type is a session level message.
 func isAdminMessageType(m []byte) bool {
 	switch {
 	case bytes.Equal(msgTypeHeartbeat, m),
