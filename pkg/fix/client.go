@@ -33,6 +33,8 @@ type Initiator interface {
 	Stop()
 }
 
+type Sender func(m quickfix.Messagable) (err error)
+
 // Client implements the quickfix.Application interface.
 type Client struct {
 	log *zap.SugaredLogger
@@ -58,6 +60,7 @@ type Client struct {
 	subscriptions    []string
 	subscriptionsMap map[string]bool
 	emitter          *emission.Emitter
+	sender           Sender
 }
 
 type Dialer func(
@@ -198,6 +201,7 @@ func New(
 	secretKey string,
 	settings *quickfix.Settings,
 	dialer Dialer,
+	sender Sender,
 ) (*Client, error) {
 	logger := zap.S()
 
@@ -213,6 +217,10 @@ func New(
 	if err != nil {
 		logger.Errorw("Fail to read SenderCompID from settings", "error", err)
 		return nil, err
+	}
+
+	if sender == nil {
+		sender = quickfix.Send
 	}
 
 	// Create a new Client object.
@@ -231,10 +239,22 @@ func New(
 		pending:          make(map[string]*call),
 		subscriptionsMap: make(map[string]bool),
 		emitter:          emission.NewEmitter(),
+		sender:           sender,
 	}
 
 	// Init session and logon to deribit FIX API server.
 	logFactory := quickfix.NewNullLogFactory()
+
+	if dialer == nil {
+		dialer = func(
+			a quickfix.Application,
+			f quickfix.MessageStoreFactory,
+			s *quickfix.Settings,
+			l quickfix.LogFactory,
+		) (Initiator, error) {
+			return quickfix.NewInitiator(a, f, s, l)
+		}
+	}
 
 	client.initiator, err = dialer(
 		client,
@@ -471,7 +491,7 @@ func (c *Client) send(
 	}
 	c.mu.Unlock()
 
-	if err := quickfix.Send(msg); err != nil {
+	if err := c.sender(msg); err != nil {
 		c.mu.Lock()
 		delete(c.pending, id)
 		c.mu.Unlock()
