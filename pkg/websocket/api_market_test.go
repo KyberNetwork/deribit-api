@@ -12,9 +12,9 @@ import (
 func TestGetBookSummaryByCurrency(t *testing.T) {
 	expect := []models.BookSummary{
 		{
-			AskPrice:          Float64Pointer(20000),
+			AskPrice:          float64Pointer(20000),
 			BaseCurrency:      "BTC",
-			BidPrice:          Float64Pointer(19999),
+			BidPrice:          float64Pointer(19999),
 			CreationTimestamp: uint64(time.Now().UnixMilli()),
 		},
 	}
@@ -34,9 +34,9 @@ func TestGetBookSummaryByCurrency(t *testing.T) {
 func TestGetBookSummaryByInstrument(t *testing.T) {
 	expect := []models.BookSummary{
 		{
-			AskPrice:          Float64Pointer(20000),
+			AskPrice:          float64Pointer(20000),
 			BaseCurrency:      "BTC",
-			BidPrice:          Float64Pointer(19999),
+			BidPrice:          float64Pointer(19999),
 			CreationTimestamp: uint64(time.Now().UnixMilli()),
 		},
 	}
@@ -411,7 +411,7 @@ func TestGetOrderBook(t *testing.T) {
 		Timestamp: 1663059512573,
 		Stats: models.Stats{
 			Volume:      5489,
-			PriceChange: Float64Pointer(0.8791),
+			PriceChange: float64Pointer(0.8791),
 			Low:         20716.81,
 			High:        22920,
 		},
@@ -510,7 +510,7 @@ func TestTicker(t *testing.T) {
 		Timestamp: 1663060531887,
 		Stats: models.Stats{
 			Volume:      5447,
-			PriceChange: Float64Pointer(5.3373),
+			PriceChange: float64Pointer(5.3373),
 			Low:         20716.81,
 			High:        22920,
 		},

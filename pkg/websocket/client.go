@@ -231,6 +231,7 @@ func (c *Client) Stop() {
 	logger := c.l.With("func", "Stop")
 	if c.autoReconnect {
 		close(c.stopC)
+		time.Sleep(time.Second)
 	}
 	c.setIsConnected(false)
 	close(c.heartCancel)

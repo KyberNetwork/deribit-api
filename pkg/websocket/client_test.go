@@ -90,11 +90,12 @@ func addResult(conn JSONRPC2, res interface{}) {
 
 func newClient() *Client {
 	cfg := Configuration{
-		Addr:       TestBaseURL,
-		APIKey:     "test_api_key",
-		SecretKey:  "test_secret_key",
-		DebugMode:  true,
-		NewRPCConn: NewMockRCConn,
+		Addr:          TestBaseURL,
+		APIKey:        "test_api_key",
+		SecretKey:     "test_secret_key",
+		DebugMode:     true,
+		NewRPCConn:    NewMockRCConn,
+		AutoReconnect: true,
 	}
 
 	return New(zap.S(), &cfg)
@@ -114,6 +115,23 @@ func TestMain(m *testing.M) {
 	testClient.Stop()
 
 	os.Exit(retCode)
+}
+
+func TestNewRPCConn(t *testing.T) {
+	conn, err := NewRPCConn(context.Background(), TestBaseURL, nil)
+	if assert.NoError(t, err) {
+		assert.NotNil(t, conn)
+	}
+}
+
+func TestNewClient(t *testing.T) {
+	cfg := Configuration{
+		Addr:       TestBaseURL,
+		DebugMode:  true,
+		NewRPCConn: nil,
+	}
+	client := New(zap.S(), &cfg)
+	assert.NotNil(t, client)
 }
 
 func TestStartStop(t *testing.T) {
@@ -421,9 +439,9 @@ func TestHandle(t *testing.T) {
 			expect: &models.QuoteNotification{
 				Timestamp:      1662721273742,
 				InstrumentName: "BTC-PERPETUAL",
-				BestBidPrice:   Float64Pointer(21070),
+				BestBidPrice:   float64Pointer(21070),
 				BestBidAmount:  1010,
-				BestAskPrice:   Float64Pointer(21075),
+				BestAskPrice:   float64Pointer(21075),
 				BestAskAmount:  3730,
 			},
 		},
@@ -439,7 +457,7 @@ func TestHandle(t *testing.T) {
 				Timestamp: 1662721394017,
 				Stats: models.Stats{
 					Volume:      9678,
-					PriceChange: Float64Pointer(8.5),
+					PriceChange: float64Pointer(8.5),
 					Low:         19025,
 					High:        21100.5,
 				},
@@ -454,9 +472,9 @@ func TestHandle(t *testing.T) {
 				IndexPrice:      21025.44,
 				Funding8H:       -0.001,
 				CurrentFunding:  -0.001,
-				BestBidPrice:    Float64Pointer(20986),
+				BestBidPrice:    float64Pointer(20986),
 				BestBidAmount:   460,
-				BestAskPrice:    Float64Pointer(20987.5),
+				BestAskPrice:    float64Pointer(20987.5),
 				BestAskAmount:   400,
 			},
 		},
@@ -817,4 +835,8 @@ func TestHandle(t *testing.T) {
 		}
 		client.Off(test.params.Channel, listener)
 	}
+}
+
+func float64Pointer(v float64) *float64 {
+	return &v
 }
