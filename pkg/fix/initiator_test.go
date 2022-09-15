@@ -19,7 +19,7 @@ type MockInitiator struct {
 	stopChan        chan interface{}
 }
 
-func CreateMockInitiator(
+func createMockInitiator(
 	app quickfix.Application,
 	storeFactory quickfix.MessageStoreFactory,
 	appSettings *quickfix.Settings,
@@ -73,10 +73,10 @@ func (i *MockInitiator) Stop() {
 }
 
 // Send sends message to counterparty (Deribit Server)
-func (i *MockInitiator) send(msg *quickfix.Message) {
+func (i *MockInitiator) send(msg *quickfix.Message) error {
 	msgType, err := msg.Header.GetBytes(tag.MsgType)
 	if err != nil {
-		return
+		return err
 	}
 
 	if isAdminMessageType(msgType) {
@@ -87,37 +87,43 @@ func (i *MockInitiator) send(msg *quickfix.Message) {
 		for sessionID := range i.sessionSettings {
 			err := i.app.ToApp(msg, sessionID)
 			if err != nil {
-				return
+				return err
 			}
 		}
 	}
+	return nil
 }
 
 // Receive receives message from counterparty (Deribit Server)
-// func (i *MockInitiator) receive(msg *quickfix.Message) {
-// 	msgType, err := msg.Header.GetBytes(tag.MsgType)
-// 	if err != nil {
-// 		return
-// 	}
+func (i *MockInitiator) receive(msg *quickfix.Message) error {
+	msgType, err := msg.Header.GetBytes(tag.MsgType)
+	if err != nil {
+		return err
+	}
 
-// 	if isAdminMessageType(msgType) {
-// 		for sessionID := range i.sessionSettings {
-// 			i.app.ToAdmin(msg, sessionID)
-// 		}
-// 	} else {
-// 		for sessionID := range i.sessionSettings {
-// 			err := i.app.ToApp(msg, sessionID)
-// 			if err != nil {
-// 				return
-// 			}
-// 		}
-// 	}
-// }
+	if isAdminMessageType(msgType) {
+		for sessionID := range i.sessionSettings {
+			i.app.FromApp(msg, sessionID)
+		}
+	} else {
+		for sessionID := range i.sessionSettings {
+			err := i.app.FromApp(msg, sessionID)
+			if err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func mockDeribitResponse(msg *quickfix.Message) (err error) {
+	initiator := mockInitiator.(*MockInitiator)
+	return initiator.receive(msg)
+}
 
 func mockSender(m quickfix.Messagable) (err error) {
 	initiator := mockInitiator.(*MockInitiator)
-	initiator.send(m.ToMessage())
-	return nil
+	return initiator.send(m.ToMessage())
 }
 
 // nolint:gochecknoglobals
