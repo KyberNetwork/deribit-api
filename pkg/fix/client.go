@@ -157,8 +157,7 @@ func (c *Client) FromApp(msg *quickfix.Message, _ quickfix.SessionID) quickfix.M
 
 	reqIDTag, err2 := getReqIDTagFromMsgType(enum.MsgType(msgType))
 	if err2 != nil {
-		c.log.Warnw("Could not get request ID tag", "msgTypt", msgType, "error", err2)
-		// nolint:nilerr
+		c.log.Warnw("Could not get request ID tag", "msgType", msgType, "error", err2)
 		return nil
 	}
 

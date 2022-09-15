@@ -103,7 +103,10 @@ func (i *MockInitiator) receive(msg *quickfix.Message) error {
 
 	if isAdminMessageType(msgType) {
 		for sessionID := range i.sessionSettings {
-			i.app.FromApp(msg, sessionID)
+			err := i.app.FromAdmin(msg, sessionID)
+			if err != nil {
+				return err
+			}
 		}
 	} else {
 		for sessionID := range i.sessionSettings {
