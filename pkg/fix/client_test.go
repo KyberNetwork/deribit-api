@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"strconv"
+	"sync"
 	"testing"
 	"time"
 
@@ -14,12 +15,17 @@ import (
 	"github.com/stretchr/testify/suite"
 )
 
-// nolint:gochecknoglobals
-var mockInitiator Initiator
-
 const (
-	apiKey    = "api_key"
-	secretKey = "secret_key"
+	apiKey       = "api_key"
+	secretKey    = "secret_key"
+	responseTime = 100 * time.Microsecond
+)
+
+// nolint:gochecknoglobals
+var (
+	mockInitiator Initiator
+	requestID     string
+	mutex         = sync.Mutex{}
 )
 
 type FixTestSuite struct {
@@ -138,7 +144,7 @@ func (ts *FixTestSuite) TestHandleSubscriptions() {
 		},
 		{
 			"7", // enum.MsgType_ADVERTISEMENT,
-			"8=FIX.4.4\u00019=243\u000135=W\u000149=DERIBITSERVER\u000156=OPTION_TRADING_BTC_TESTNET\u000134=2\u000152=20220823-06:41:06.538\u000155=BTC-25AUG22-18000-C\u0001231=1.0000\u0001311=SYN.BTC-25AUG22\u0001810=21026.6783\u0001100087=0.0000\u0001100090=0.1449\u0001746=0.0000\u0001201=1\u0001262=24f68ad4-147c-4d11-bc30-9d14b35611f9\u0001268=0\u000110=126\u0001",
+			"8=FIX.4.4\u00019=5\u000135=7\u000110=170\u0001",
 			"",
 			nil,
 		},
@@ -172,7 +178,8 @@ func (ts *FixTestSuite) TestSend() {
 
 	wrongMsg := quickfix.NewMessage()
 	correctMsg := quickfix.NewMessage()
-	correctMsg.Header.Set(field.NewMsgType(enum.MsgType_ADVERTISEMENT))
+	correctMsg.Body.Set(field.NewOrigClOrdID("test_send_func_0"))
+	correctMsg.Header.Set(field.NewMsgType(enum.MsgType_EXECUTION_REPORT))
 
 	tests := []struct {
 		msg           *quickfix.Message
@@ -197,7 +204,7 @@ func (ts *FixTestSuite) TestSend() {
 	}
 
 	for idx, test := range tests {
-		id := "test_send_func" + strconv.Itoa(idx)
+		id := "test_send_func_0" + strconv.Itoa(idx)
 		waiter, err := ts.c.send(context.Background(), id, test.msg, wait)
 		if test.requiredError {
 			assert.Error(err)
@@ -226,20 +233,20 @@ func (ts *FixTestSuite) TestCall() {
 			true, // send err: Conditionally Required Field Missing (35)
 		},
 		{
-			"8=FIX.4.4\u00019=24\u000135=8\u000141=test_call_func1\u000110=130\u0001",
-			"8=FIX.4.4\u00019=42\u000135=8\u000114=123.4560000000\u000141=test_call_func1\u000110=204\u0001",
+			"8=FIX.4.4\u00019=25\u000135=8\u000141=test_call_func_1\u000110=130\u0001",
+			"8=FIX.4.4\u00019=43\u000135=8\u000114=123.4560000000\u000141=test_call_func_1\u000110=204\u0001",
 			false,
 		},
 	}
 
 	for idx, test := range tests {
-		id := "test_call_func" + strconv.Itoa(idx)
+		id := "test_call_func_" + strconv.Itoa(idx)
 		reqMsg := getMsgFromString(test.requestMsg)
 		respMsg := getMsgFromString(test.responseMsg)
 
 		if !test.requiredError {
 			go func() {
-				time.Sleep(100 * time.Microsecond)
+				time.Sleep(responseTime)
 				err := mockDeribitResponse(respMsg)
 				require.NoError(err)
 			}()
@@ -256,21 +263,283 @@ func (ts *FixTestSuite) TestCall() {
 	}
 }
 
-func (ts *FixTestSuite) TestMarketDataRequest() {}
+// example: request for subscribing orderbook
+// nolint:lll
+func (ts *FixTestSuite) TestMarketDataRequest() {
+	require := ts.Require()
+	marketDepth := 0
+	mdUpdateType := enum.MDUpdateType_INCREMENTAL_REFRESH
+	var respMsg *quickfix.Message
 
-func (ts *FixTestSuite) TestSubscribeOrderBooks() {}
+	go func() {
+		time.Sleep(responseTime)
+		// mock result for marketDataRequest response
+		msgStr := "8=FIX.4.4\u00019=189\u000135=W\u000149=DERIBITSERVER\u000156=FIX_TEST\u000134=2\u000152=20220822-03:44:38.119\u000155=BTC-26AUG22-22500-P\u0001231=1.0000\u0001311=BTC-26AUG22\u0001810=21443.3568\u0001100087=0.0000\u0001100090=0.0504\u0001746=0.0000\u0001201=0\u0001262=Hehe\u0001268=0\u000110=196\u0001"
+		respMsg = getMsgFromString(msgStr)
 
-func (ts *FixTestSuite) TestUnsubscribeOrderBooks() {}
+		mutex.Lock()
+		respMsg.Body.Set(field.NewMDReqID(requestID))
+		mutex.Unlock()
 
-func (ts *FixTestSuite) TestSubscribeTrades() {}
+		err := mockDeribitResponse(respMsg)
+		require.NoError(err)
+	}()
 
-func (ts *FixTestSuite) TestUnsubscribeTrades() {}
+	msg, err := ts.c.MarketDataRequest(
+		context.Background(),
+		enum.SubscriptionRequestType_SNAPSHOT_PLUS_UPDATES,
+		&marketDepth,
+		&mdUpdateType,
+		[]enum.MDEntryType{
+			enum.MDEntryType_BID,
+			enum.MDEntryType_OFFER,
+		},
+		[]string{"BTC-26AUG22-29000-C, BTC-PERPETUAL"},
+	)
+	require.NoError(err)
+	require.Equal(msg.String(), respMsg.String())
+}
 
-func (ts *FixTestSuite) TestSubscribe() {}
+// nolint:lll
+func (ts *FixTestSuite) TestSubscribeOrderBooks() {
+	require := ts.Require()
+	instruments := []string{"BTC-26AUG22-29000-C, BTC-PERPETUAL"}
 
-func (ts *FixTestSuite) TestUnsubscribe() {}
+	go func() {
+		time.Sleep(responseTime)
+		// subscribe orderbook mock response
+		msgStr := "8=FIX.4.4\u00019=189\u000135=W\u000149=DERIBITSERVER\u000156=FIX_TEST\u000134=2\u000152=20220822-03:44:38.119\u000155=BTC-26AUG22-22500-P\u0001231=1.0000\u0001311=BTC-26AUG22\u0001810=21443.3568\u0001100087=0.0000\u0001100090=0.0504\u0001746=0.0000\u0001201=0\u0001262=Hehe\u0001268=0\u000110=196\u0001"
+		respMsg := getMsgFromString(msgStr)
 
-func (ts *FixTestSuite) TestCreateOrder() {}
+		mutex.Lock()
+		respMsg.Body.Set(field.NewMDReqID(requestID))
+		mutex.Unlock()
+
+		err := mockDeribitResponse(respMsg)
+		require.NoError(err)
+	}()
+
+	err := ts.c.SubscribeOrderBooks(context.Background(), instruments)
+	require.NoError(err)
+}
+
+// nolint:lll
+func (ts *FixTestSuite) TestUnsubscribeOrderBooks() {
+	require := ts.Require()
+	instruments := []string{"BTC-26AUG22-29000-C, BTC-PERPETUAL"}
+
+	go func() {
+		time.Sleep(responseTime)
+		// unsubscribe orderbook mock response
+		msgStr := "8=FIX.4.4\u00019=189\u000135=W\u000149=DERIBITSERVER\u000156=FIX_TEST\u000134=2\u000152=20220822-03:44:38.119\u000155=BTC-26AUG22-22500-P\u0001231=1.0000\u0001311=BTC-26AUG22\u0001810=21443.3568\u0001100087=0.0000\u0001100090=0.0504\u0001746=0.0000\u0001201=0\u0001262=Hehe\u0001268=0\u000110=196\u0001"
+		respMsg := getMsgFromString(msgStr)
+
+		mutex.Lock()
+		respMsg.Body.Set(field.NewMDReqID(requestID))
+		mutex.Unlock()
+
+		err := mockDeribitResponse(respMsg)
+		require.NoError(err)
+	}()
+
+	err := ts.c.UnsubscribeOrderBooks(context.Background(), instruments)
+	require.NoError(err)
+}
+
+// nolint:lll
+func (ts *FixTestSuite) TestSubscribeTrades() {
+	require := ts.Require()
+	instruments := []string{"BTC-26AUG22-29000-C, BTC-PERPETUAL"}
+
+	go func() {
+		time.Sleep(responseTime)
+		// subscribe trades mock response
+		msgStr := "8=FIX.4.4\u00019=189\u000135=W\u000149=DERIBITSERVER\u000156=FIX_TEST\u000134=2\u000152=20220822-03:44:38.119\u000155=BTC-26AUG22-22500-P\u0001231=1.0000\u0001311=BTC-26AUG22\u0001810=21443.3568\u0001100087=0.0000\u0001100090=0.0504\u0001746=0.0000\u0001201=0\u0001262=Hehe\u0001268=0\u000110=196\u0001"
+		respMsg := getMsgFromString(msgStr)
+
+		mutex.Lock()
+		respMsg.Body.Set(field.NewMDReqID(requestID))
+		mutex.Unlock()
+
+		err := mockDeribitResponse(respMsg)
+		require.NoError(err)
+	}()
+
+	err := ts.c.SubscribeTrades(context.Background(), instruments)
+	require.NoError(err)
+}
+
+// nolint:lll
+func (ts *FixTestSuite) TestUnsubscribeTrades() {
+	require := ts.Require()
+	instruments := []string{"BTC-26AUG22-29000-C, BTC-PERPETUAL"}
+
+	go func() {
+		time.Sleep(responseTime)
+		// unsubscribe trades mock response
+		msgStr := "8=FIX.4.4\u00019=189\u000135=W\u000149=DERIBITSERVER\u000156=FIX_TEST\u000134=2\u000152=20220822-03:44:38.119\u000155=BTC-26AUG22-22500-P\u0001231=1.0000\u0001311=BTC-26AUG22\u0001810=21443.3568\u0001100087=0.0000\u0001100090=0.0504\u0001746=0.0000\u0001201=0\u0001262=Hehe\u0001268=0\u000110=196\u0001"
+		respMsg := getMsgFromString(msgStr)
+
+		mutex.Lock()
+		respMsg.Body.Set(field.NewMDReqID(requestID))
+		mutex.Unlock()
+
+		err := mockDeribitResponse(respMsg)
+		require.NoError(err)
+	}()
+
+	err := ts.c.UnsubscribeTrades(context.Background(), instruments)
+	require.NoError(err)
+}
+
+// nolint:lll
+func (ts *FixTestSuite) TestSubscribe() {
+	require := ts.Require()
+
+	type testSubscribe struct {
+		channel       string
+		fixResp       string
+		expectedError error
+	}
+
+	tests := []testSubscribe{
+		{
+			"book.BTC-PERPETUAL",
+			"8=FIX.4.4\u00019=189\u000135=W\u000149=DERIBITSERVER\u000156=FIX_TEST\u000134=2\u000152=20220822-03:44:38.119\u000155=BTC-26AUG22-22500-P\u0001231=1.0000\u0001311=BTC-26AUG22\u0001810=21443.3568\u0001100087=0.0000\u0001100090=0.0504\u0001746=0.0000\u0001201=0\u0001262=Hehe\u0001268=0\u000110=196\u0001",
+			nil,
+		},
+		{
+			"trades.BTC-PERPETUAL",
+			"8=FIX.4.4\u00019=189\u000135=W\u000149=DERIBITSERVER\u000156=FIX_TEST\u000134=2\u000152=20220822-03:44:38.119\u000155=BTC-26AUG22-22500-P\u0001231=1.0000\u0001311=BTC-26AUG22\u0001810=21443.3568\u0001100087=0.0000\u0001100090=0.0504\u0001746=0.0000\u0001201=0\u0001262=Hehe\u0001268=0\u000110=196\u0001",
+			nil,
+		},
+	}
+
+	require.Len(ts.c.subscriptions, 0)
+
+	for _, test := range tests {
+		// subscribe mock response
+		go func(test testSubscribe) {
+			time.Sleep(responseTime)
+			respMsg := getMsgFromString(test.fixResp)
+
+			mutex.Lock()
+			respMsg.Body.Set(field.NewMDReqID(requestID))
+			mutex.Unlock()
+
+			err := mockDeribitResponse(respMsg)
+			require.NoError(err)
+		}(test)
+
+		err := ts.c.Subscribe(context.Background(), []string{test.channel})
+		require.NoError(err)
+	}
+
+	require.Len(ts.c.subscriptions, 2)
+}
+
+// nolint:lll
+func (ts *FixTestSuite) TestUnsubscribe() {
+	require := ts.Require()
+
+	type testSubscribe struct {
+		channel       string
+		fixResp       string
+		expectedError error
+	}
+
+	tests := []testSubscribe{
+		{
+			"book.BTC-PERPETUAL",
+			"8=FIX.4.4\u00019=189\u000135=W\u000149=DERIBITSERVER\u000156=FIX_TEST\u000134=2\u000152=20220822-03:44:38.119\u000155=BTC-26AUG22-22500-P\u0001231=1.0000\u0001311=BTC-26AUG22\u0001810=21443.3568\u0001100087=0.0000\u0001100090=0.0504\u0001746=0.0000\u0001201=0\u0001262=Hehe\u0001268=0\u000110=196\u0001",
+			nil,
+		},
+		{
+			"trades.BTC-PERPETUAL",
+			"8=FIX.4.4\u00019=189\u000135=W\u000149=DERIBITSERVER\u000156=FIX_TEST\u000134=2\u000152=20220822-03:44:38.119\u000155=BTC-26AUG22-22500-P\u0001231=1.0000\u0001311=BTC-26AUG22\u0001810=21443.3568\u0001100087=0.0000\u0001100090=0.0504\u0001746=0.0000\u0001201=0\u0001262=Hehe\u0001268=0\u000110=196\u0001",
+			nil,
+		},
+	}
+
+	require.Len(ts.c.subscriptions, 2)
+
+	for _, test := range tests {
+		// unsubscribe mock response
+		go func(test testSubscribe) {
+			time.Sleep(responseTime)
+			respMsg := getMsgFromString(test.fixResp)
+
+			mutex.Lock()
+			respMsg.Body.Set(field.NewMDReqID(requestID))
+			mutex.Unlock()
+
+			err := mockDeribitResponse(respMsg)
+			require.NoError(err)
+		}(test)
+
+		err := ts.c.Unsubscribe(context.Background(), []string{test.channel})
+		require.NoError(err)
+	}
+
+	require.Len(ts.c.subscriptions, 0)
+}
+
+// nolint:lll
+func (ts *FixTestSuite) TestCreateOrder() {
+	require := ts.Require()
+
+	go func() {
+		time.Sleep(responseTime)
+		// create order mock response
+		msgStr := "8=FIX.4.4\u00019=494\u000135=8\u000149=DERIBITSERVER\u000156=FIX_TEST\u000134=9158\u000152=20220818-06:37:42.584\u0001527=14020845373\u000137=14020845373\u000111=14020845373\u000141=6b5c1fe2-e6ad-4ccf-93d7-8b6ccd51cdea\u0001150=I\u000139=2\u000154=1\u000160=20220818-06:37:42.583\u000112=0.00003000\u0001151=0.0000\u000114=0.1000\u000138=0.1000\u000140=2\u000144=0.077\u0001103=0\u000158=success\u0001207=DERIBITSERVER\u000155=BTC-19AUG22-21000-C\u0001854=1\u0001231=1.0000\u00016=0.077000\u0001210=0.1000\u0001100010=BTC-19AUG22-21000-C_buy_0.077_0.1_JNGhwLYqkJzoYSk\u000132=0.1000\u000131=0.0770\u00011362=1\u00011363=BTC-19AUG22-21000-C#102\u00011364=0.0770\u00011365=0.1000\u00011443=2\u000110=012\u0001"
+		respMsg := getMsgFromString(msgStr)
+
+		mutex.Lock()
+		respMsg.Body.Set(field.NewOrigClOrdID(requestID))
+		mutex.Unlock()
+
+		err := mockDeribitResponse(respMsg)
+		require.NoError(err)
+	}()
+
+	res, err := ts.c.CreateOrder(
+		context.Background(),
+		"BTC-19AUG22-21000-C",             // symbol
+		"buy",                             // side
+		0.1,                               // amount
+		0.077,                             // price
+		enum.OrdType_LIMIT,                // order_type
+		enum.TimeInForce_GOOD_TILL_CANCEL, // time_in_force
+		"",                                // execInst
+		"BTC-19AUG22-21000-C_buy_0.077_0.1_JNGhwLYqkJzoYSk", // CltOrdId
+	)
+	expectedOutput := models.Order{
+		OrderState:          "filled",
+		MaxShow:             0.1,
+		API:                 true,
+		Amount:              0.1,
+		Web:                 false,
+		InstrumentName:      "BTC-19AUG22-21000-C",
+		OriginalOrderType:   "limit",
+		Price:               0.077,
+		TimeInForce:         "good_til_cancelled",
+		LastUpdateTimestamp: 1660804662583,
+		PostOnly:            false,
+		Replaced:            false,
+		FilledAmount:        0.1,
+		AveragePrice:        0.077,
+		OrderID:             "14020845373",
+		ReduceOnly:          false,
+		Commission:          3e-05,
+		Label:               "BTC-19AUG22-21000-C_buy_0.077_0.1_JNGhwLYqkJzoYSk",
+		CreationTimestamp:   1660804662583,
+		Direction:           "buy",
+		OrderType:           "limit",
+	}
+
+	require.NoError(err)
+	require.Equal(res, expectedOutput)
+}
 
 func getMsgFromString(str string) *quickfix.Message {
 	msg := quickfix.NewMessage()

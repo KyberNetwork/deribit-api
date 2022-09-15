@@ -3,8 +3,10 @@ package fix
 import (
 	"bytes"
 	"errors"
+	"fmt"
 
 	"github.com/KyberNetwork/deribit-api/pkg/models"
+	"github.com/quickfixgo/enum"
 	"github.com/quickfixgo/quickfix"
 	"github.com/quickfixgo/tag"
 )
@@ -76,6 +78,23 @@ func (i *MockInitiator) Stop() {
 func (i *MockInitiator) send(msg *quickfix.Message) error {
 	msgType, err := msg.Header.GetBytes(tag.MsgType)
 	if err != nil {
+		fmt.Println("xx", err)
+		return err
+	}
+
+	reqIDTag, err2 := getReqIDTagFromMsgType(enum.MsgType(msgType))
+	if err2 != nil {
+		// for creating order, requestID dont get from msgType
+		fmt.Println("yy", err2)
+		reqIDTag = tag.ClOrdID
+		// return err2
+	}
+
+	mutex.Lock()
+	requestID, err = msg.Body.GetString(reqIDTag)
+	mutex.Unlock()
+	if err != nil {
+		fmt.Println("zz", err)
 		return err
 	}
 
