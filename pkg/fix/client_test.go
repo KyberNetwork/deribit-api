@@ -66,8 +66,14 @@ func (ts *FixTestSuite) SetupSuite() {
 	for _, test := range initiateFixClientTests {
 		appSettings, err := quickfix.ParseSettings(bytes.NewBufferString(test.config))
 		require.NoError(err)
-
-		c, err := New(context.Background(), apiKey, secretKey, appSettings, createMockInitiator, mockSender)
+		cfg := Config{
+			ApiKey:    apiKey,
+			SecretKey: secretKey,
+			Settings:  appSettings,
+			Dialer:    createMockInitiator,
+			Sender:    mockSender,
+		}
+		c, err := New(context.Background(), cfg)
 		if test.requiredError {
 			require.Error(err)
 		} else {
@@ -78,11 +84,16 @@ func (ts *FixTestSuite) SetupSuite() {
 	}
 
 	// Default Initiator and MockSender
-	config := "[DEFAULT]\nSenderCompID=FIX_TEST\nTargetCompID=XXX\nResetOnLogon=Y\n\n[SESSION]\nBeginString=FIX.4.4\n"
-	appSettings, err := quickfix.ParseSettings(bytes.NewBufferString(config))
+	settingStr := "[DEFAULT]\nSenderCompID=FIX_TEST\nTargetCompID=XXX\nResetOnLogon=Y\n\n[SESSION]\nBeginString=FIX.4.4\n"
+	appSettings, err := quickfix.ParseSettings(bytes.NewBufferString(settingStr))
 	require.NoError(err)
+	cfg := Config{
+		ApiKey:    apiKey,
+		SecretKey: secretKey,
+		Settings:  appSettings,
+	}
 
-	client, err := New(context.Background(), "", "", appSettings, nil, nil)
+	client, err := New(context.Background(), cfg)
 	require.Error(err)
 	require.Nil(client)
 }

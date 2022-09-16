@@ -35,6 +35,14 @@ type Initiator interface {
 
 type Sender func(m quickfix.Messagable) (err error)
 
+type Config struct {
+	ApiKey    string
+	SecretKey string
+	Settings  *quickfix.Settings
+	Dialer    Dialer
+	Sender    Sender
+}
+
 // Client implements the quickfix.Application interface.
 type Client struct {
 	log *zap.SugaredLogger
@@ -194,18 +202,19 @@ func (c *Client) FromApp(msg *quickfix.Message, _ quickfix.SessionID) quickfix.M
 
 // New returns a new client for Deribit FIX API.
 // nolint:funlen
+
 func New(
 	ctx context.Context,
-	apiKey string,
-	secretKey string,
-	settings *quickfix.Settings,
-	dialer Dialer,
-	sender Sender,
+	cfg Config,
 ) (*Client, error) {
 	logger := zap.S()
 
 	// Get TargetCompID and SenderCompID from settings.
-	globalSettings := settings.GlobalSettings()
+	if cfg.Settings == nil {
+		return nil, errors.New("empty quickfix settings")
+	}
+
+	globalSettings := cfg.Settings.GlobalSettings()
 	targetCompID, err := globalSettings.Setting("TargetCompID")
 	if err != nil {
 		logger.Errorw("Fail to read TargetCompID from settings", "error", err)
@@ -217,7 +226,7 @@ func New(
 		logger.Errorw("Fail to read SenderCompID from settings", "error", err)
 		return nil, err
 	}
-
+	sender := cfg.Sender
 	if sender == nil {
 		sender = quickfix.Send
 	}
@@ -225,9 +234,9 @@ func New(
 	// Create a new Client object.
 	client := &Client{
 		log:              logger,
-		apiKey:           apiKey,
-		secretKey:        secretKey,
-		settings:         settings,
+		apiKey:           cfg.ApiKey,
+		secretKey:        cfg.SecretKey,
+		settings:         cfg.Settings,
 		targetCompID:     targetCompID,
 		senderCompID:     senderCompID,
 		mu:               sync.Mutex{},
@@ -244,6 +253,7 @@ func New(
 	// Init session and logon to deribit FIX API server.
 	logFactory := quickfix.NewNullLogFactory()
 
+	dialer := cfg.Dialer
 	if dialer == nil {
 		dialer = func(
 			a quickfix.Application,
@@ -258,7 +268,7 @@ func New(
 	client.initiator, err = dialer(
 		client,
 		quickfix.NewMemoryStoreFactory(),
-		settings,
+		cfg.Settings,
 		logFactory,
 	)
 	if err != nil {
