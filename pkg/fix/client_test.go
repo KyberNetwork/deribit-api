@@ -67,7 +67,7 @@ func (ts *FixTestSuite) SetupSuite() {
 		appSettings, err := quickfix.ParseSettings(bytes.NewBufferString(test.config))
 		require.NoError(err)
 		cfg := Config{
-			ApiKey:    apiKey,
+			APIKey:    apiKey,
 			SecretKey: secretKey,
 			Settings:  appSettings,
 			Dialer:    createMockInitiator,
@@ -88,7 +88,7 @@ func (ts *FixTestSuite) SetupSuite() {
 	appSettings, err := quickfix.ParseSettings(bytes.NewBufferString(settingStr))
 	require.NoError(err)
 	cfg := Config{
-		ApiKey:    apiKey,
+		APIKey:    apiKey,
 		SecretKey: secretKey,
 		Settings:  appSettings,
 	}

@@ -36,7 +36,7 @@ type Initiator interface {
 type Sender func(m quickfix.Messagable) (err error)
 
 type Config struct {
-	ApiKey    string
+	APIKey    string
 	SecretKey string
 	Settings  *quickfix.Settings
 	Dialer    Dialer
@@ -202,7 +202,6 @@ func (c *Client) FromApp(msg *quickfix.Message, _ quickfix.SessionID) quickfix.M
 
 // New returns a new client for Deribit FIX API.
 // nolint:funlen
-
 func New(
 	ctx context.Context,
 	cfg Config,
@@ -234,7 +233,7 @@ func New(
 	// Create a new Client object.
 	client := &Client{
 		log:              logger,
-		apiKey:           cfg.ApiKey,
+		apiKey:           cfg.APIKey,
 		secretKey:        cfg.SecretKey,
 		settings:         cfg.Settings,
 		targetCompID:     targetCompID,
