@@ -304,92 +304,144 @@ func (ts *FixTestSuite) TestMarketDataRequest() {
 func (ts *FixTestSuite) TestSubscribeOrderBooks() {
 	require := ts.Require()
 	instruments := []string{"BTC-26AUG22-29000-C, BTC-PERPETUAL"}
+	wrongInstruments := []string{"SHIB-26AUG22-0.000123-C, SHIB-PERPETUAL"}
+	sendResp := make(chan bool)
 
 	go func() {
-		time.Sleep(responseTime)
-		// subscribe orderbook mock response
-		msgStr := "8=FIX.4.4\u00019=189\u000135=W\u000149=DERIBITSERVER\u000156=FIX_TEST\u000134=2\u000152=20220822-03:44:38.119\u000155=BTC-26AUG22-22500-P\u0001231=1.0000\u0001311=BTC-26AUG22\u0001810=21443.3568\u0001100087=0.0000\u0001100090=0.0504\u0001746=0.0000\u0001201=0\u0001262=Hoho\u0001268=0\u000110=196\u0001"
-		respMsg := getMsgFromString(msgStr)
+		msgStrings := []string{
+			"8=FIX.4.4\u00019=189\u000135=W\u000149=DERIBITSERVER\u000156=FIX_TEST\u000134=2\u000152=20220822-03:44:38.119\u000155=BTC-26AUG22-22500-P\u0001231=1.0000\u0001311=BTC-26AUG22\u0001810=21443.3568\u0001100087=0.0000\u0001100090=0.0504\u0001746=0.0000\u0001201=0\u0001262=Hoho\u0001268=0\u000110=196\u0001",
+			"8=FIX.4.4\u00019=189\u000135=Y\u000149=DERIBITSERVER\u000156=FIX_TEST\u000134=2\u000152=20220822-03:44:38.119\u000155=BTC-26AUG22-22500-P\u0001231=1.0000\u0001311=BTC-26AUG22\u0001810=21443.3568\u0001100087=0.0000\u0001100090=0.0504\u0001746=0.0000\u0001201=0\u0001262=Hoho\u0001268=0\u000110=196\u0001",
+		}
+		for _, msgStr := range msgStrings {
+			<-sendResp
+			// subscribe orderbook mock response
+			time.Sleep(responseTime)
+			respMsg := getMsgFromString(msgStr)
 
-		mutex.Lock()
-		respMsg.Body.Set(field.NewMDReqID(requestID))
-		mutex.Unlock()
+			mutex.Lock()
+			respMsg.Body.Set(field.NewMDReqID(requestID))
+			mutex.Unlock()
 
-		err := mockDeribitResponse(respMsg)
-		require.NoError(err)
+			err := mockDeribitResponse(respMsg)
+			require.NoError(err)
+		}
 	}()
 
+	sendResp <- true
 	err := ts.c.SubscribeOrderBooks(context.Background(), instruments)
 	require.NoError(err)
+
+	sendResp <- true
+	err = ts.c.SubscribeOrderBooks(context.Background(), wrongInstruments)
+	require.Error(err) // MsgType_MARKET_DATA_REQUEST_REJECT
 }
 
 // nolint:lll
 func (ts *FixTestSuite) TestUnsubscribeOrderBooks() {
 	require := ts.Require()
 	instruments := []string{"BTC-26AUG22-29000-C, BTC-PERPETUAL"}
+	wrongInstruments := []string{"SHIB-26AUG22-0.000123-C, SHIB-PERPETUAL"}
+	sendResp := make(chan bool)
 
 	go func() {
-		time.Sleep(responseTime)
-		// unsubscribe orderbook mock response
-		msgStr := "8=FIX.4.4\u00019=189\u000135=W\u000149=DERIBITSERVER\u000156=FIX_TEST\u000134=2\u000152=20220822-03:44:38.119\u000155=BTC-26AUG22-22500-P\u0001231=1.0000\u0001311=BTC-26AUG22\u0001810=21443.3568\u0001100087=0.0000\u0001100090=0.0504\u0001746=0.0000\u0001201=0\u0001262=Hihi\u0001268=0\u000110=196\u0001"
-		respMsg := getMsgFromString(msgStr)
+		msgStrings := []string{
+			"8=FIX.4.4\u00019=189\u000135=W\u000149=DERIBITSERVER\u000156=FIX_TEST\u000134=2\u000152=20220822-03:44:38.119\u000155=BTC-26AUG22-22500-P\u0001231=1.0000\u0001311=BTC-26AUG22\u0001810=21443.3568\u0001100087=0.0000\u0001100090=0.0504\u0001746=0.0000\u0001201=0\u0001262=Hoho\u0001268=0\u000110=196\u0001",
+			"8=FIX.4.4\u00019=189\u000135=Y\u000149=DERIBITSERVER\u000156=FIX_TEST\u000134=2\u000152=20220822-03:44:38.119\u000155=BTC-26AUG22-22500-P\u0001231=1.0000\u0001311=BTC-26AUG22\u0001810=21443.3568\u0001100087=0.0000\u0001100090=0.0504\u0001746=0.0000\u0001201=0\u0001262=Hoho\u0001268=0\u000110=196\u0001",
+		}
+		for _, msgStr := range msgStrings {
+			<-sendResp
+			// unsubscribe orderbook mock response
+			time.Sleep(responseTime)
+			respMsg := getMsgFromString(msgStr)
 
-		mutex.Lock()
-		respMsg.Body.Set(field.NewMDReqID(requestID))
-		mutex.Unlock()
+			mutex.Lock()
+			respMsg.Body.Set(field.NewMDReqID(requestID))
+			mutex.Unlock()
 
-		err := mockDeribitResponse(respMsg)
-		require.NoError(err)
+			err := mockDeribitResponse(respMsg)
+			require.NoError(err)
+		}
 	}()
 
+	sendResp <- true
 	err := ts.c.UnsubscribeOrderBooks(context.Background(), instruments)
 	require.NoError(err)
+
+	sendResp <- true
+	err = ts.c.UnsubscribeOrderBooks(context.Background(), wrongInstruments)
+	require.Error(err) // MsgType_MARKET_DATA_REQUEST_REJECT
 }
 
 // nolint:lll
 func (ts *FixTestSuite) TestSubscribeTrades() {
 	require := ts.Require()
 	instruments := []string{"BTC-26AUG22-29000-C, BTC-PERPETUAL"}
+	wrongInstruments := []string{"SHIB-26AUG22-0.000123-C, SHIB-PERPETUAL"}
+	sendResp := make(chan bool)
 
 	go func() {
-		time.Sleep(responseTime)
-		// subscribe trades mock response
-		msgStr := "8=FIX.4.4\u00019=189\u000135=W\u000149=DERIBITSERVER\u000156=FIX_TEST\u000134=2\u000152=20220822-03:44:38.119\u000155=BTC-26AUG22-22500-P\u0001231=1.0000\u0001311=BTC-26AUG22\u0001810=21443.3568\u0001100087=0.0000\u0001100090=0.0504\u0001746=0.0000\u0001201=0\u0001262=Huhu\u0001268=0\u000110=196\u0001"
-		respMsg := getMsgFromString(msgStr)
+		msgStrings := []string{
+			"8=FIX.4.4\u00019=189\u000135=W\u000149=DERIBITSERVER\u000156=FIX_TEST\u000134=2\u000152=20220822-03:44:38.119\u000155=BTC-26AUG22-22500-P\u0001231=1.0000\u0001311=BTC-26AUG22\u0001810=21443.3568\u0001100087=0.0000\u0001100090=0.0504\u0001746=0.0000\u0001201=0\u0001262=Hoho\u0001268=0\u000110=196\u0001",
+			"8=FIX.4.4\u00019=189\u000135=Y\u000149=DERIBITSERVER\u000156=FIX_TEST\u000134=2\u000152=20220822-03:44:38.119\u000155=BTC-26AUG22-22500-P\u0001231=1.0000\u0001311=BTC-26AUG22\u0001810=21443.3568\u0001100087=0.0000\u0001100090=0.0504\u0001746=0.0000\u0001201=0\u0001262=Hoho\u0001268=0\u000110=196\u0001",
+		}
+		for _, msgStr := range msgStrings {
+			<-sendResp
+			// subscribe trades mock response
+			time.Sleep(responseTime)
+			respMsg := getMsgFromString(msgStr)
 
-		mutex.Lock()
-		respMsg.Body.Set(field.NewMDReqID(requestID))
-		mutex.Unlock()
+			mutex.Lock()
+			respMsg.Body.Set(field.NewMDReqID(requestID))
+			mutex.Unlock()
 
-		err := mockDeribitResponse(respMsg)
-		require.NoError(err)
+			err := mockDeribitResponse(respMsg)
+			require.NoError(err)
+		}
 	}()
 
+	sendResp <- true
 	err := ts.c.SubscribeTrades(context.Background(), instruments)
 	require.NoError(err)
+
+	sendResp <- true
+	err = ts.c.SubscribeTrades(context.Background(), wrongInstruments)
+	require.Error(err) // MsgType_MARKET_DATA_REQUEST_REJECT
 }
 
 // nolint:lll
 func (ts *FixTestSuite) TestUnsubscribeTrades() {
 	require := ts.Require()
 	instruments := []string{"BTC-26AUG22-29000-C, BTC-PERPETUAL"}
+	wrongInstruments := []string{"SHIB-26AUG22-0.000123-C, SHIB-PERPETUAL"}
+	sendResp := make(chan bool)
 
 	go func() {
-		time.Sleep(responseTime)
-		// unsubscribe trades mock response
-		msgStr := "8=FIX.4.4\u00019=189\u000135=W\u000149=DERIBITSERVER\u000156=FIX_TEST\u000134=2\u000152=20220822-03:44:38.119\u000155=BTC-26AUG22-22500-P\u0001231=1.0000\u0001311=BTC-26AUG22\u0001810=21443.3568\u0001100087=0.0000\u0001100090=0.0504\u0001746=0.0000\u0001201=0\u0001262=Hihe\u0001268=0\u000110=196\u0001"
-		respMsg := getMsgFromString(msgStr)
+		msgStrings := []string{
+			"8=FIX.4.4\u00019=189\u000135=W\u000149=DERIBITSERVER\u000156=FIX_TEST\u000134=2\u000152=20220822-03:44:38.119\u000155=BTC-26AUG22-22500-P\u0001231=1.0000\u0001311=BTC-26AUG22\u0001810=21443.3568\u0001100087=0.0000\u0001100090=0.0504\u0001746=0.0000\u0001201=0\u0001262=Hoho\u0001268=0\u000110=196\u0001",
+			"8=FIX.4.4\u00019=189\u000135=Y\u000149=DERIBITSERVER\u000156=FIX_TEST\u000134=2\u000152=20220822-03:44:38.119\u000155=BTC-26AUG22-22500-P\u0001231=1.0000\u0001311=BTC-26AUG22\u0001810=21443.3568\u0001100087=0.0000\u0001100090=0.0504\u0001746=0.0000\u0001201=0\u0001262=Hoho\u0001268=0\u000110=196\u0001",
+		}
+		for _, msgStr := range msgStrings {
+			<-sendResp
+			// unsubscribe trades mock response
+			time.Sleep(responseTime)
+			respMsg := getMsgFromString(msgStr)
 
-		mutex.Lock()
-		respMsg.Body.Set(field.NewMDReqID(requestID))
-		mutex.Unlock()
+			mutex.Lock()
+			respMsg.Body.Set(field.NewMDReqID(requestID))
+			mutex.Unlock()
 
-		err := mockDeribitResponse(respMsg)
-		require.NoError(err)
+			err := mockDeribitResponse(respMsg)
+			require.NoError(err)
+		}
 	}()
 
+	sendResp <- true
 	err := ts.c.UnsubscribeTrades(context.Background(), instruments)
 	require.NoError(err)
+
+	sendResp <- true
+	err = ts.c.UnsubscribeTrades(context.Background(), wrongInstruments)
+	require.Error(err) // MsgType_MARKET_DATA_REQUEST_REJECT
 }
 
 // nolint:lll,dupl
@@ -487,21 +539,30 @@ func (ts *FixTestSuite) TestUnsubscribe() {
 // nolint:lll
 func (ts *FixTestSuite) TestCreateOrder() {
 	require := ts.Require()
+	sendResp := make(chan bool)
 
 	go func() {
-		time.Sleep(responseTime)
-		// create order mock response
-		msgStr := "8=FIX.4.4\u00019=494\u000135=8\u000149=DERIBITSERVER\u000156=FIX_TEST\u000134=9158\u000152=20220818-06:37:42.584\u0001527=14020845373\u000137=14020845373\u000111=14020845373\u000141=6b5c1fe2-e6ad-4ccf-93d7-8b6ccd51cdea\u0001150=I\u000139=2\u000154=1\u000160=20220818-06:37:42.583\u000112=0.00003000\u0001151=0.0000\u000114=0.1000\u000138=0.1000\u000140=2\u000144=0.077\u0001103=0\u000158=success\u0001207=DERIBITSERVER\u000155=BTC-19AUG22-21000-C\u0001854=1\u0001231=1.0000\u00016=0.077000\u0001210=0.1000\u0001100010=BTC-19AUG22-21000-C_buy_0.077_0.1_JNGhwLYqkJzoYSk\u000132=0.1000\u000131=0.0770\u00011362=1\u00011363=BTC-19AUG22-21000-C#102\u00011364=0.0770\u00011365=0.1000\u00011443=2\u000110=012\u0001"
-		respMsg := getMsgFromString(msgStr)
+		msgStrings := []string{
+			"8=FIX.4.4\u00019=494\u000135=8\u000149=DERIBITSERVER\u000156=FIX_TEST\u000134=9158\u000152=20220818-06:37:42.584\u0001527=14020845373\u000137=14020845373\u000111=14020845373\u000141=6b5c1fe2-e6ad-4ccf-93d7-8b6ccd51cdea\u0001150=I\u000139=2\u000154=1\u000160=20220818-06:37:42.583\u000112=0.00003000\u0001151=0.0000\u000114=0.1000\u000138=0.1000\u000140=2\u000144=0.077\u0001103=0\u000158=success\u0001207=DERIBITSERVER\u000155=BTC-19AUG22-21000-C\u0001854=1\u0001231=1.0000\u00016=0.077000\u0001210=0.1000\u0001100010=BTC-19AUG22-21000-C_buy_0.077_0.1_JNGhwLYqkJzoYSk\u000132=0.1000\u000131=0.0770\u00011362=1\u00011363=BTC-19AUG22-21000-C#102\u00011364=0.0770\u00011365=0.1000\u00011443=2\u000110=012\u0001",
+			"8=FIX.4.4\u00019=432\u000135=8\u000149=DERIBITSERVER\u000156=OPTION_TRADING_TEST\u000134=7534\u000152=20220912-11:12:19.623\u0001527=14230452591\u000137=14230452591\u000111=14230452591\u000141=ff39b93f-4e8c-4187-8930-6eac35bdb2e9\u0001150=I\u000139=2\u000154=1\u000160=20220912-11:12:19.623\u000112=0.00300000\u0001151=0.0\u000114=10.0\u000138=10.0\u000140=2\u000144=0.0865\u0001103=0\u000158=success\u0001207=DERIBITSERVER\u000155=BTC-30JUN23-14000-P\u0001854=1\u0001231=1.0\u00016=0.086500\u0001210=10.0\u000132=10.0\u000131=0.0865\u00011362=1\u00011363=BTC-30JUN23-14000-P#83\u00011364=0.0865\u00011365=10.0\u00011443=2\u000110=071\u0001",
+		}
+		for _, msgStr := range msgStrings {
+			<-sendResp
+			// create order mock response
+			time.Sleep(responseTime)
+			respMsg := getMsgFromString(msgStr)
 
-		mutex.Lock()
-		respMsg.Body.Set(field.NewOrigClOrdID(requestID))
-		mutex.Unlock()
+			mutex.Lock()
+			respMsg.Body.Set(field.NewOrigClOrdID(requestID))
+			mutex.Unlock()
 
-		err := mockDeribitResponse(respMsg)
-		require.NoError(err)
+			err := mockDeribitResponse(respMsg)
+			require.NoError(err)
+		}
 	}()
 
+	// success case
+	sendResp <- true
 	res, err := ts.c.CreateOrder(
 		context.Background(),
 		"BTC-19AUG22-21000-C",             // symbol
@@ -539,6 +600,22 @@ func (ts *FixTestSuite) TestCreateOrder() {
 
 	require.NoError(err)
 	require.Equal(res, expectedOutput)
+
+	// error case
+	sendResp <- true
+	res, err = ts.c.CreateOrder(
+		context.Background(),
+		"BTC-19AUG22-21000-C",             // symbol
+		"buy",                             // side
+		0.1,                               // amount
+		0.077,                             // price
+		enum.OrdType_LIMIT,                // order_type
+		enum.TimeInForce_GOOD_TILL_CANCEL, // time_in_force
+		"",                                // execInst
+		"BTC-19AUG22-21000-C_buy_0.077_0.1_JNGhwLYqkJzoYSk", // CltOrdId
+	)
+	require.Error(err)
+	require.Equal(res, models.Order{})
 }
 
 func getMsgFromString(str string) *quickfix.Message {
