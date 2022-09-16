@@ -76,6 +76,15 @@ func (ts *FixTestSuite) SetupSuite() {
 			ts.c = c
 		}
 	}
+
+	// Default Initiator and MockSender
+	config := "[DEFAULT]\nSenderCompID=FIX_TEST\nTargetCompID=XXX\nResetOnLogon=Y\n\n[SESSION]\nBeginString=FIX.4.4\n"
+	appSettings, err := quickfix.ParseSettings(bytes.NewBufferString(config))
+	require.NoError(err)
+
+	client, err := New(context.Background(), "", "", appSettings, nil, nil)
+	require.Error(err)
+	require.Nil(client)
 }
 
 // nolint:lll,funlen
@@ -147,6 +156,19 @@ func (ts *FixTestSuite) TestHandleSubscriptions() {
 			"8=FIX.4.4\u00019=5\u000135=7\u000110=170\u0001",
 			"",
 			nil,
+		},
+		// some wrong decoder
+		{
+			"W",
+			"8=FIX.4.4\u00019=5\u000135=7\u000110=170\u0001",
+			"",
+			nil, // failed to getSymbol
+		},
+		{
+			"W",
+			"8=FIX.4.4\u00019=17\u000135=7\u000155=BTC_USDT\u000110=253\u0001",
+			"",
+			nil, // failed to getSymbol
 		},
 	}
 
@@ -536,7 +558,7 @@ func (ts *FixTestSuite) TestUnsubscribe() {
 	require.Len(ts.c.subscriptions, 0)
 }
 
-// nolint:lll
+// nolint:lll,funlen
 func (ts *FixTestSuite) TestCreateOrder() {
 	require := ts.Require()
 	sendResp := make(chan bool)
