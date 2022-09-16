@@ -76,8 +76,8 @@ func (c *Client) OnCreate(_ quickfix.SessionID) {}
 // OnLogon implemented as part of Application interface.
 func (c *Client) OnLogon(_ quickfix.SessionID) {
 	c.mu.Lock()
-	defer c.mu.Unlock()
 	c.isConnected = true
+	c.mu.Unlock()
 
 	c.log.Debugw("Logon successfully!")
 

@@ -550,3 +550,21 @@ func getMsgFromString(str string) *quickfix.Message {
 	}
 	return msg
 }
+
+func (ts *FixTestSuite) TestXClose() {
+	require := ts.Require()
+
+	// subscribe book and trades channels
+	require.Len(ts.c.subscriptions, 0)
+	ts.TestSubscribe()
+	require.Len(ts.c.subscriptions, 2)
+	require.Len(ts.c.subscriptionsMap, 2)
+
+	require.True(ts.c.IsConnected())
+	ts.c.Close()
+	require.False(ts.c.IsConnected())
+
+	// wait a little time to restart client
+	time.Sleep(responseTime)
+	require.True(ts.c.IsConnected())
+}

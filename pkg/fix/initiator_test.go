@@ -3,6 +3,7 @@ package fix
 import (
 	"bytes"
 	"errors"
+	"sync"
 
 	"github.com/KyberNetwork/deribit-api/pkg/models"
 	"github.com/quickfixgo/enum"
@@ -11,13 +12,14 @@ import (
 )
 
 type MockInitiator struct {
+	mu              *sync.Mutex
 	app             quickfix.Application
 	settings        *quickfix.Settings
 	sessionSettings map[quickfix.SessionID]*quickfix.SessionSettings
 	storeFactory    quickfix.MessageStoreFactory
 	logFactory      quickfix.LogFactory
 	results         []interface{}
-	stopChan        chan interface{}
+	isActive        bool
 }
 
 func createMockInitiator(
@@ -27,6 +29,7 @@ func createMockInitiator(
 	logFactory quickfix.LogFactory,
 ) (Initiator, error) {
 	i := &MockInitiator{
+		mu:              &sync.Mutex{},
 		app:             app,
 		storeFactory:    storeFactory,
 		settings:        appSettings,
@@ -45,9 +48,10 @@ func createMockInitiator(
 }
 
 func (i *MockInitiator) Start() error {
-	i.stopChan = make(chan interface{})
-
 	for sessionID, s := range i.sessionSettings {
+		// send Logon message
+		i.app.ToAdmin(quickfix.NewMessage(), sessionID)
+
 		if !s.HasSetting("SocketConnectHost") {
 			return errors.New("Conditionally Required Setting: SocketConnectHost")
 		}
@@ -58,19 +62,32 @@ func (i *MockInitiator) Start() error {
 		i.app.OnLogon(sessionID)
 	}
 
+	i.setIsActive(true)
 	return nil
 }
 
 func (i *MockInitiator) Stop() {
-	select {
-	case <-i.stopChan:
+	if i.getIsActive() {
 		for sessionID := range i.sessionSettings {
 			i.app.OnLogout(sessionID)
 		}
+		i.setIsActive(false)
 		return
-	default:
 	}
-	close(i.stopChan)
+}
+
+func (i *MockInitiator) getIsActive() bool {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+
+	return i.isActive
+}
+
+func (i *MockInitiator) setIsActive(val bool) {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+
+	i.isActive = val
 }
 
 // Send sends message to counterparty (Deribit Server)
