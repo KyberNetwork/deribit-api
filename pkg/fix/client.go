@@ -59,7 +59,6 @@ type Client struct {
 
 	mu          sync.Mutex
 	isConnected bool
-	stopCh      chan struct{}
 
 	sending sync.Mutex
 	pending map[string]*call
@@ -237,7 +236,6 @@ func New(
 		senderCompID:     senderCompID,
 		mu:               sync.Mutex{},
 		isConnected:      false,
-		stopCh:           make(chan struct{}),
 		sending:          sync.Mutex{},
 		pending:          make(map[string]*call),
 		subscriptionsMap: make(map[string]bool),
@@ -277,8 +275,6 @@ func New(
 		return nil, err
 	}
 
-	go client.monitor()
-
 	return client, nil
 }
 
@@ -294,16 +290,6 @@ func (c *Client) Start() error {
 	}
 
 	return nil
-}
-
-func (c *Client) Stop() {
-	close(c.stopCh)
-	c.initiator.Stop()
-}
-
-func (c *Client) monitor() {
-	<-c.stopCh
-	c.log.Infow("Stop deribit fix connection")
 }
 
 // IsConnected checks whether the connection is established or not.
