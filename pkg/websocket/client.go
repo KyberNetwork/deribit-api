@@ -106,8 +106,6 @@ func New(l *zap.SugaredLogger, cfg *Configuration) *Client {
 		debugMode:        cfg.DebugMode,
 		newRPCConn:       cfg.NewRPCConn,
 		mu:               sync.RWMutex{},
-		stopC:            make(chan struct{}),
-		restartCh:        make(chan struct{}),
 		subscriptionsMap: make(map[string]struct{}),
 		emitter:          emission.NewEmitter(),
 	}
@@ -135,6 +133,7 @@ func (c *Client) Start() error {
 	c.subscriptionsMap = make(map[string]struct{})
 	c.rpcConn = nil
 	c.heartCancel = make(chan struct{})
+	c.restartCh = make(chan struct{})
 
 	rpcConn, err := c.newRPCConn(context.Background(), c.addr, c)
 	if err != nil {
@@ -168,6 +167,7 @@ func (c *Client) Start() error {
 	go c.heartbeat()
 
 	if c.autoReconnect {
+		c.stopC = make(chan struct{})
 		go c.reconnect()
 	}
 
