@@ -81,9 +81,9 @@ type Client struct {
 	newRPCConn  RPCConnector
 	rpcConn     JSONRPC2
 	mu          sync.RWMutex
-	once        sync.Once
 	heartCancel chan struct{}
 	isConnected bool
+	restartCh   chan struct{}
 	stopC       chan struct{}
 
 	subscriptions    []string
@@ -106,7 +106,8 @@ func New(l *zap.SugaredLogger, cfg *Configuration) *Client {
 		debugMode:        cfg.DebugMode,
 		newRPCConn:       cfg.NewRPCConn,
 		mu:               sync.RWMutex{},
-		once:             sync.Once{},
+		stopC:            make(chan struct{}),
+		restartCh:        make(chan struct{}, 1),
 		subscriptionsMap: make(map[string]struct{}),
 		emitter:          emission.NewEmitter(),
 	}
@@ -166,13 +167,9 @@ func (c *Client) Start() error {
 
 	go c.heartbeat()
 
-	c.once.Do(func() {
-		if c.autoReconnect {
-			c.l.With("func", "start").Infow("auto reconnect is enable")
-			c.stopC = make(chan struct{})
-			go c.reconnect()
-		}
-	})
+	if c.autoReconnect {
+		go c.reconnect()
+	}
 
 	return nil
 }
@@ -197,10 +194,9 @@ func (c *Client) Call(ctx context.Context, method string, params interface{}, re
 	// or `jsonrpc2: connection is closed`
 	if err != nil && (errors.Is(err, syscall.EPIPE) || errors.Is(err, syscall.ECONNRESET) ||
 		errors.Is(err, jsonrpc2.ErrClosed)) {
-		c.l.Error("failed to call to rpcConn", "err", err)
+		c.l.Errorw("failed to call to rpcConn", "err", err)
 		if err := c.rpcConn.Close(); err != nil {
 			c.l.Warnw("failed to close connection", "err", err)
-			// force to restart connection
 			c.RestartConnection()
 		}
 	}
@@ -242,7 +238,6 @@ func (c *Client) Stop() {
 	if err := c.rpcConn.Close(); err != nil {
 		logger.Warnw("error close ws connection", "err", err)
 	}
-	c.once = sync.Once{}
 	c.subscriptions = nil
 }
 
@@ -273,11 +268,21 @@ func (c *Client) reconnect() {
 			return
 		case <-c.rpcConn.DisconnectNotify():
 			c.RestartConnection()
+		case <-c.restartCh:
+			c.restartConnection()
+			return
 		}
 	}
 }
 
 func (c *Client) RestartConnection() {
+	select {
+	case c.restartCh <- struct{}{}:
+	default:
+	}
+}
+
+func (c *Client) restartConnection() {
 	logger := c.l.With("func", "RestartConnection")
 	c.setIsConnected(false)
 	logger.Infow("disconnect, reconnect...")
