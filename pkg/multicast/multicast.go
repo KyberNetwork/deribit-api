@@ -241,6 +241,14 @@ func (c *Client) decodeOrderBookEvent(
 		}
 	}
 
+	if book.IsLast == sbe.YesNo.No {
+		c.log.Infow("Received multicast orderbook with isLast=No",
+			"instrument", instrumentName,
+			"multicast_orderbook", book,
+			"decoded_orderbook", event,
+		)
+	}
+
 	return Event{
 		Type: EventTypeOrderBook,
 		Data: event,
