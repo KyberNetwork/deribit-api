@@ -130,6 +130,7 @@ func getAllInstrument(
 func (c *Client) decodeEvents(
 	marshaler *sbe.SbeGoMarshaller, reader io.Reader,
 ) (events []Event, err error) {
+	bookChangesMap := make(map[string][]sbe.BookChangesList)
 	// Decode Sbe messages
 	for {
 		// Decode message header.
@@ -141,8 +142,11 @@ func (c *Client) decodeEvents(
 			}
 			return
 		}
-		event, err := c.decodeEvent(marshaler, reader, header)
+		event, err := c.decodeEvent(marshaler, reader, header, bookChangesMap)
 		if err != nil {
+			if errors.Is(err, ErrOrderbookWithoutIsLast) {
+				continue
+			}
 			return nil, err
 		}
 		events = append(events, event)
@@ -153,12 +157,13 @@ func (c *Client) decodeEvent(
 	marshaler *sbe.SbeGoMarshaller,
 	reader io.Reader,
 	header sbe.MessageHeader,
+	bookChangesMap map[string][]sbe.BookChangesList,
 ) (Event, error) {
 	switch header.TemplateId {
 	case 1000:
 		return c.decodeInstrumentEvent(marshaler, reader, header)
 	case 1001:
-		return c.decodeOrderBookEvent(marshaler, reader, header)
+		return c.decodeOrderBookEvent(marshaler, reader, header, bookChangesMap)
 	case 1002:
 		return c.decodeTradesEvent(marshaler, reader, header)
 	case 1003:
@@ -211,6 +216,7 @@ func (c *Client) decodeOrderBookEvent(
 	marshaler *sbe.SbeGoMarshaller,
 	reader io.Reader,
 	header sbe.MessageHeader,
+	bookChangesMap map[string][]sbe.BookChangesList,
 ) (Event, error) {
 	var book sbe.Book
 	err := book.Decode(marshaler, reader, header.BlockLength, true)
@@ -220,11 +226,41 @@ func (c *Client) decodeOrderBookEvent(
 	}
 
 	instrumentName := c.getInstrument(book.InstrumentId).InstrumentName
+	key := instrumentName + strconv.FormatUint(book.ChangeId, 10)
+
+	if book.IsLast == sbe.YesNo.No {
+		c.log.Infow("Received multicast orderbook with isLast=No",
+			"instrument", instrumentName,
+			"multicast_orderbook", book,
+		)
+		changeList, ok := bookChangesMap[key]
+		if ok {
+			bookChangesMap[key] = append(changeList, book.ChangesList...)
+		} else {
+			bookChangesMap[key] = book.ChangesList
+		}
+		return Event{}, ErrOrderbookWithoutIsLast
+	}
+
+	return parseSbeBookToEvent(instrumentName, book, bookChangesMap, key), nil
+}
+
+func parseSbeBookToEvent(
+	instrumentName string,
+	book sbe.Book,
+	bookChangesMap map[string][]sbe.BookChangesList,
+	key string,
+) Event {
 	event := models.OrderBookRawNotification{
 		Timestamp:      int64(book.TimestampMs),
 		InstrumentName: instrumentName,
 		PrevChangeID:   int64(book.PrevChangeId),
 		ChangeID:       int64(book.ChangeId),
+	}
+
+	if bookChanges, ok := bookChangesMap[key]; ok {
+		book.ChangesList = append(book.ChangesList, bookChanges...)
+		delete(bookChangesMap, key)
 	}
 
 	for _, bookChange := range book.ChangesList {
@@ -240,19 +276,10 @@ func (c *Client) decodeOrderBookEvent(
 			event.Bids = append(event.Bids, item)
 		}
 	}
-
-	if book.IsLast == sbe.YesNo.No {
-		c.log.Infow("Received multicast orderbook with isLast=No",
-			"instrument", instrumentName,
-			"multicast_orderbook", book,
-			"decoded_orderbook", event,
-		)
-	}
-
 	return Event{
 		Type: EventTypeOrderBook,
 		Data: event,
-	}, nil
+	}
 }
 
 func (c *Client) decodeTradesEvent(

@@ -343,7 +343,7 @@ func (ts *MulticastTestSuite) TestDecodeOrderbookEvent() {
 		require.NoError(err)
 		require.Equal(header, test.expectedHeader)
 
-		eventDecoded, err := ts.c.decodeOrderBookEvent(ts.m, bufferData, header)
+		eventDecoded, err := ts.c.decodeOrderBookEvent(ts.m, bufferData, header, make(map[string][]sbe.BookChangesList))
 
 		require.ErrorIs(err, test.expectedError)
 		require.Equal(test.expectedOutput, eventDecoded)
@@ -529,7 +529,7 @@ func (ts *MulticastTestSuite) TestDecodeEvent() {
 		err := header.Decode(ts.m, bufferData)
 		assert.NoError(err)
 
-		decodedEvent, err := ts.c.decodeEvent(ts.m, bufferData, header)
+		decodedEvent, err := ts.c.decodeEvent(ts.m, bufferData, header, make(map[string][]sbe.BookChangesList))
 		assert.ErrorIs(err, test.expectError)
 		assert.Nil(decodedEvent.Data)
 	}
