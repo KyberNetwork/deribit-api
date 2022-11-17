@@ -33,6 +33,7 @@ const (
 	EventTypeOrderBook
 	EventTypeTrades
 	EventTypeTicker
+	EventTypeSnapshot
 )
 
 // Event represents a Deribit multicast events.
@@ -131,6 +132,8 @@ func (c *Client) decodeEvents(
 	marshaler *sbe.SbeGoMarshaller, reader io.Reader,
 ) (events []Event, err error) {
 	bookChangesMap := make(map[string][]sbe.BookChangesList)
+	snapshotLevelsMap := make(map[string][]sbe.SnapshotLevelsList)
+
 	// Decode Sbe messages
 	for {
 		// Decode message header.
@@ -142,9 +145,9 @@ func (c *Client) decodeEvents(
 			}
 			return
 		}
-		event, err := c.decodeEvent(marshaler, reader, header, bookChangesMap)
+		event, err := c.decodeEvent(marshaler, reader, header, bookChangesMap, snapshotLevelsMap)
 		if err != nil {
-			if errors.Is(err, ErrOrderbookWithoutIsLast) {
+			if errors.Is(err, ErrEventWithoutIsLast) {
 				continue
 			}
 			return nil, err
@@ -158,6 +161,7 @@ func (c *Client) decodeEvent(
 	reader io.Reader,
 	header sbe.MessageHeader,
 	bookChangesMap map[string][]sbe.BookChangesList,
+	snapshotLevelsMap map[string][]sbe.SnapshotLevelsList,
 ) (Event, error) {
 	switch header.TemplateId {
 	case 1000:
@@ -168,6 +172,8 @@ func (c *Client) decodeEvent(
 		return c.decodeTradesEvent(marshaler, reader, header)
 	case 1003:
 		return c.decodeTickerEvent(marshaler, reader, header)
+	case 1004:
+		return c.decodeSnapshotEvent(marshaler, reader, header, snapshotLevelsMap)
 	default:
 		return Event{}, fmt.Errorf("%w, templateId: %d", ErrUnsupportedTemplateID, header.TemplateId)
 	}
@@ -239,7 +245,7 @@ func (c *Client) decodeOrderBookEvent(
 		} else {
 			bookChangesMap[key] = book.ChangesList
 		}
-		return Event{}, ErrOrderbookWithoutIsLast
+		return Event{}, fmt.Errorf("orderbook: %w", ErrEventWithoutIsLast)
 	}
 
 	return parseSbeBookToEvent(instrumentName, book, bookChangesMap, key), nil
@@ -259,7 +265,7 @@ func parseSbeBookToEvent(
 	}
 
 	if bookChanges, ok := bookChangesMap[key]; ok {
-		book.ChangesList = append(book.ChangesList, bookChanges...)
+		book.ChangesList = append(bookChanges, book.ChangesList...)
 		delete(bookChangesMap, key)
 	}
 
@@ -360,6 +366,75 @@ func (c *Client) decodeTickerEvent(
 		Type: EventTypeTicker,
 		Data: event,
 	}, nil
+}
+
+func (c *Client) decodeSnapshotEvent(
+	marshaler *sbe.SbeGoMarshaller,
+	reader io.Reader,
+	header sbe.MessageHeader,
+	snapshotLevelsMap map[string][]sbe.SnapshotLevelsList,
+) (Event, error) {
+	var snapshot sbe.Snapshot
+	err := snapshot.Decode(marshaler, reader, header.BlockLength, true)
+	if err != nil {
+		c.log.Errorw("failed to decode snapshot event", "err", err)
+		return Event{}, err
+	}
+
+	instrumentName := c.getInstrument(snapshot.InstrumentId).InstrumentName
+	key := instrumentName + strconv.FormatUint(snapshot.ChangeId, 10)
+
+	if snapshot.IsLastInBook == sbe.YesNo.No {
+		c.log.Infow("Received multicast snapshot with IsLastInBook=No",
+			"instrument", instrumentName,
+			"snapshot", snapshot,
+		)
+		levelsList, ok := snapshotLevelsMap[key]
+		if ok {
+			snapshotLevelsMap[key] = append(levelsList, snapshot.LevelsList...)
+		} else {
+			snapshotLevelsMap[key] = snapshot.LevelsList
+		}
+		return Event{}, fmt.Errorf("snapshot: %w", ErrEventWithoutIsLast)
+	}
+
+	return parseSbeSnapshotToEvent(instrumentName, snapshot, snapshotLevelsMap, key), nil
+}
+
+func parseSbeSnapshotToEvent(
+	instrumentName string,
+	snapshot sbe.Snapshot,
+	snapshotLevelsMap map[string][]sbe.SnapshotLevelsList,
+	key string,
+) Event {
+	event := models.OrderBookRawNotification{
+		Timestamp:      int64(snapshot.TimestampMs),
+		InstrumentName: instrumentName,
+		ChangeID:       int64(snapshot.ChangeId),
+	}
+
+	if levelsList, ok := snapshotLevelsMap[key]; ok {
+		snapshot.LevelsList = append(levelsList, snapshot.LevelsList...)
+		delete(snapshotLevelsMap, key)
+	}
+
+	for _, level := range snapshot.LevelsList {
+		item := models.OrderBookNotificationItem{
+			Action: "new",
+			Price:  level.Price,
+			Amount: level.Amount,
+		}
+
+		if level.Side == sbe.BookSide.Ask {
+			event.Asks = append(event.Asks, item)
+		} else if level.Side == sbe.BookSide.Bid {
+			event.Bids = append(event.Bids, item)
+		}
+	}
+	return Event{
+		Type: EventTypeSnapshot,
+		Data: event,
+	}
 }
 
 func (c *Client) emitEvents(events []Event) {

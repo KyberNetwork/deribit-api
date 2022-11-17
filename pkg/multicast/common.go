@@ -15,12 +15,12 @@ const (
 
 var (
 	// ErrLostPackage           = errors.New("lost package")
-	ErrConnectionReset        = errors.New("connection reset")
-	ErrUnsupportedTemplateID  = errors.New("unsupported templateId")
-	ErrDuplicatedPackage      = errors.New("duplicated package")
-	ErrInvalidIpv4Address     = errors.New("invalid ipv4 address")
-	ErrOutOfOrder             = errors.New("package out of order")
-	ErrOrderbookWithoutIsLast = errors.New("orderbook without isLast")
+	ErrConnectionReset       = errors.New("connection reset")
+	ErrUnsupportedTemplateID = errors.New("unsupported templateId")
+	ErrDuplicatedPackage     = errors.New("duplicated package")
+	ErrInvalidIpv4Address    = errors.New("invalid ipv4 address")
+	ErrOutOfOrder            = errors.New("package out of order")
+	ErrEventWithoutIsLast    = errors.New("decoded event without isLast")
 )
 
 func newInstrumentNotificationChannel(kind, currency string) string {
