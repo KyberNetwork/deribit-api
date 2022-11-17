@@ -218,6 +218,7 @@ func (c *Client) decodeInstrumentEvent(
 	}, nil
 }
 
+// nolint:dupl
 func (c *Client) decodeOrderBookEvent(
 	marshaler *sbe.SbeGoMarshaller,
 	reader io.Reader,
@@ -368,6 +369,7 @@ func (c *Client) decodeTickerEvent(
 	}, nil
 }
 
+// nolint:dupl
 func (c *Client) decodeSnapshotEvent(
 	marshaler *sbe.SbeGoMarshaller,
 	reader io.Reader,
