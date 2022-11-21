@@ -39,6 +39,10 @@ func newTickerNotificationChannel(instrument string) string {
 	return "ticker." + instrument
 }
 
+func newSnapshotNotificationChannel(instrument string) string {
+	return "snapshot." + instrument
+}
+
 func getCurrencyFromInstrument(instrument string) string {
 	return strings.Split(instrument, "-")[0]
 }

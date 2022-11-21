@@ -467,6 +467,10 @@ func (c *Client) emitEvents(events []Event) {
 		case EventTypeTicker:
 			ticker := event.Data.(models.TickerNotification)
 			c.Emit(newTickerNotificationChannel(ticker.InstrumentName), &ticker)
+
+		case EventTypeSnapshot:
+			snapshot := event.Data.(models.OrderBookRawNotification)
+			c.Emit(newSnapshotNotificationChannel(snapshot.InstrumentName), &snapshot)
 		}
 	}
 }
