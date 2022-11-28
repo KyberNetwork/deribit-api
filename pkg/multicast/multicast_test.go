@@ -1121,7 +1121,7 @@ func (ts *MulticastTestSuite) TestListenToEvents() {
 
 	group := net.ParseIP("239.111.111.1")
 	dst := &net.UDPAddr{IP: group, Port: 6100}
-	ts.c.conns[0].SetMulticastInterface(ts.c.inf)
+	_ = ts.c.conns[0].SetMulticastInterface(ts.c.inf)
 
 	numEvent := 0
 	ts.c.On("book.BTC-31MAR23", func(b *models.OrderBookRawNotification) {

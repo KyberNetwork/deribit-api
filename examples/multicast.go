@@ -25,8 +25,7 @@ var (
 	apiKey             = flag.String("api-key", "", "API client ID")
 	secretKey          = flag.String("secret-key", "", "API secret key")
 	ifname             = flag.String("ifname", "bond-colocation", "Interface name to listen for multicast events")
-	addrs              = flag.String("addrs", "239.111.111.1,239.111.111.2,239.111.111.3", "UDP addresses to listen to multicast events")
-	port               = flag.Int("port", 6100, "UDP port to listen to multicast event")
+	addrs              = flag.String("addrs", "239.111.111.1:6100,239.111.111.2:6100,239.111.111.3:6100", "UDP addresses to listen to multicast events")
 	gatherDataDuration = flag.Duration("gather-data-duration", 3*time.Minute, "Gather data duration")
 	storagePath        = flag.String("storage-path", "examples/", "Path to storage output file")
 	log                *zap.SugaredLogger
@@ -151,7 +150,7 @@ func main() {
 	}
 
 	udpAddrs := strings.Split(*addrs, ",")
-	multicastClient, err := multicast.NewClient(*ifname, udpAddrs, *port, wsClient, []string{"BTC"})
+	multicastClient, err := multicast.NewClient(*ifname, udpAddrs, wsClient, []string{"BTC"})
 	if err != nil {
 		log.Errorw("failed to initiate multicast client", "ifname", ifname, "addrs", addrs)
 		panic(err)

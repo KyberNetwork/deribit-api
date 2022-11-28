@@ -705,7 +705,7 @@ func (c *Client) setupConnections() ([]net.IP, error) {
 }
 
 // ListenToEvents listens to a list of udp addresses on given network interface.
-// nolint:cyclop
+// nolint:cyclop,gocognit
 func (c *Client) ListenToEvents(ctx context.Context) error {
 	ipGroups, err := c.setupConnections()
 	if err != nil {
