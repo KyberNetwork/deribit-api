@@ -79,26 +79,25 @@ func (ts *MulticastTestSuite) SetupSuite() {
 	require := ts.Require()
 	var (
 		ifname     = "not-exits-ifname"
-		ipAddrs    = []string{"239.111.111.1", "239.111.111.2", "239.111.111.3"}
-		port       = 6100
+		addrs      = []string{"239.111.111.1:6100", "239.111.111.2:6100", "239.111.111.3:6100"}
 		currencies = []string{"BTC", "ETH"}
 	)
 
 	m := sbe.NewSbeGoMarshaller()
 
 	// Error case
-	client, err := NewClient(ifname, ipAddrs, port, &MockInstrumentsGetter{}, currencies)
+	client, err := NewClient(ifname, addrs, &MockInstrumentsGetter{}, currencies)
 	require.Error(err)
 	require.Nil(client)
 
 	// Success case
 	ifi, err := net.InterfaceByIndex(1)
 	require.NoError(err)
-	client, err = NewClient(ifi.Name, ipAddrs, port, &MockInstrumentsGetter{}, currencies)
+	client, err = NewClient(ifi.Name, addrs, &MockInstrumentsGetter{}, currencies)
 	require.NoError(err)
 	require.NotNil(client)
 
-	wrongClient, err := NewClient("", ipAddrs, port, &MockInstrumentsGetter{}, []string{"SHIB"})
+	wrongClient, err := NewClient("", addrs, &MockInstrumentsGetter{}, []string{"SHIB"})
 	require.NoError(err)
 	require.NotNil(client)
 
@@ -118,7 +117,7 @@ func (ts *MulticastTestSuite) SetupSuite() {
 		return allIns[i].InstrumentID < allIns[j].InstrumentID
 	})
 
-	testSetupConnection(client, require)
+	testSetupConnections(client, require)
 
 	ts.c = client
 	ts.wrongClient = wrongClient
@@ -127,14 +126,14 @@ func (ts *MulticastTestSuite) SetupSuite() {
 	ts.insMap = insMap
 }
 
-func testSetupConnection(c *Client, require *require.Assertions) {
+func testSetupConnections(c *Client, require *require.Assertions) {
 	mu := &sync.RWMutex{}
 	expectedIPGroups := []net.IP{
 		net.ParseIP("239.111.111.1"), net.ParseIP("239.111.111.2"), net.ParseIP("239.111.111.3"),
 	}
 
 	mu.Lock()
-	ipGroups, err := c.setupConnection()
+	ipGroups, err := c.setupConnections()
 	mu.Unlock()
 	require.NoError(err)
 
@@ -1121,9 +1120,8 @@ func (ts *MulticastTestSuite) TestListenToEvents() {
 	mu := &sync.RWMutex{}
 
 	group := net.ParseIP("239.111.111.1")
-	dst := &net.UDPAddr{IP: group, Port: ts.c.port}
-	err := ts.c.conn.SetMulticastInterface(ts.c.inf)
-	require.NoError(err)
+	dst := &net.UDPAddr{IP: group, Port: 6100}
+	ts.c.conns[0].SetMulticastInterface(ts.c.inf)
 
 	numEvent := 0
 	ts.c.On("book.BTC-31MAR23", func(b *models.OrderBookRawNotification) {
@@ -1142,7 +1140,7 @@ func (ts *MulticastTestSuite) TestListenToEvents() {
 		0x00, 0x00, 0x04, 0xaf, 0x40,
 	}
 
-	_, err = ts.c.conn.WriteTo(data, nil, dst)
+	_, err := ts.c.conns[0].WriteTo(data, nil, dst)
 	require.NoError(err)
 
 	time.Sleep(100 * time.Millisecond)
@@ -1156,12 +1154,10 @@ func (ts *MulticastTestSuite) TestStartStop() {
 
 	// wrong client with nil connection
 	err := ts.wrongClient.Stop()
-	require.Nil(ts.wrongClient.conn)
 	require.NoError(err)
 
 	// there is a connection in client
 	err = ts.c.Stop()
-	require.NotNil(ts.c.conn)
 	ts.Require().NoError(err)
 
 	err = ts.c.Start(context.Background())

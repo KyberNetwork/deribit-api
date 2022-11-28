@@ -9,6 +9,7 @@ import (
 	"math"
 	"net"
 	"strconv"
+	"strings"
 	"sync"
 
 	"github.com/KyberNetwork/deribit-api/pkg/models"
@@ -50,9 +51,8 @@ type InstrumentsGetter interface {
 type Client struct {
 	log               *zap.SugaredLogger
 	inf               *net.Interface
-	ipAddrs           []string
-	port              int
-	conn              *ipv4.PacketConn
+	addrs             []string
+	conns             []*ipv4.PacketConn
 	instrumentsGetter InstrumentsGetter
 
 	supportCurrencies []string
@@ -63,8 +63,7 @@ type Client struct {
 // NewClient creates a new Client instance.
 func NewClient(
 	ifname string,
-	ipAddrs []string,
-	port int,
+	addrs []string,
 	instrumentsGetter InstrumentsGetter,
 	currencies []string,
 ) (client *Client, err error) {
@@ -82,8 +81,7 @@ func NewClient(
 	client = &Client{
 		log:               log,
 		inf:               inf,
-		ipAddrs:           ipAddrs,
-		port:              port,
+		addrs:             addrs,
 		instrumentsGetter: instrumentsGetter,
 
 		supportCurrencies: currencies,
@@ -504,9 +502,12 @@ func (c *Client) restartConnections(ctx context.Context) error {
 
 // Stop stops listening for events.
 func (c *Client) Stop() error {
-	if c.conn != nil {
-		return c.conn.Close()
+	for _, conn := range c.conns {
+		conn.Close()
 	}
+
+	c.conns = nil
+
 	return nil
 }
 
@@ -624,46 +625,89 @@ func (p *Pool) Put(bs Bytes) {
 	p.queue = append(p.queue, bs[:cap(bs)])
 }
 
-func (c *Client) setupConnection() ([]net.IP, error) {
+func (c *Client) setupConnection(port int, ips []string) ([]net.IP, error) {
 	lc := net.ListenConfig{
 		Control: Control,
 	}
-	conn, err := lc.ListenPacket(context.Background(), "udp4", "0.0.0.0:"+strconv.Itoa(c.port))
+	conn, err := lc.ListenPacket(context.Background(), "udp4", "0.0.0.0:"+strconv.Itoa(port))
 	if err != nil {
-		c.log.Errorw("Failed to initiate packet connection", "err", err, "port", c.port)
+		c.log.Errorw("Failed to initiate packet connection", "err", err, "port", port)
 		return nil, err
 	}
 
-	c.conn = ipv4.NewPacketConn(conn)
+	idx := len(c.conns)
+	c.conns = append(c.conns, ipv4.NewPacketConn(conn))
 
-	ipGroups := make([]net.IP, len(c.ipAddrs))
+	ipGroups := make([]net.IP, len(ips))
 
-	err = c.conn.SetControlMessage(ipv4.FlagDst, true)
+	err = c.conns[idx].SetControlMessage(ipv4.FlagDst, true)
 	if err != nil {
 		c.log.Errorw("Failed to set control message", "err", err)
 		return nil, err
 	}
 
-	for index, ipAddr := range c.ipAddrs {
-		group := net.ParseIP(ipAddr)
+	for i, ip := range ips {
+		group := net.ParseIP(ip)
 		if group == nil {
 			return nil, ErrInvalidIpv4Address
 		}
-		err := c.conn.JoinGroup(c.inf, &net.UDPAddr{IP: group})
+		err := c.conns[idx].JoinGroup(c.inf, &net.UDPAddr{IP: group})
 		if err != nil {
-			c.log.Errorw("failed to join group", "group", group, "err", err, "ipAddr", ipAddr)
+			c.log.Errorw("failed to join group", "group", group, "err", err, "ip", ip)
 			return nil, err
 		}
-		ipGroups[index] = group
+		ipGroups[i] = group
 	}
 
 	return ipGroups, nil
 }
 
+func splitAddr(addr string) (string, int, error) {
+	parts := strings.Split(addr, ":")
+	if len(parts) != 2 {
+		return "", 0, errors.New("invalid address")
+	}
+
+	port, err := strconv.Atoi(parts[1])
+	if err != nil {
+		return "", 0, err
+	}
+
+	return parts[0], port, nil
+}
+
+func (c *Client) setupConnections() ([]net.IP, error) {
+	portIPsMap := make(map[int][]string)
+	for _, addr := range c.addrs {
+		ip, port, err := splitAddr(addr)
+		if err != nil {
+			c.log.Errorw("Fail to split addr", "addr", addr, "error", err)
+			return nil, err
+		}
+
+		ips := portIPsMap[port]
+		ips = append(ips, ip)
+		portIPsMap[port] = ips
+	}
+
+	var ipAddrs []net.IP
+	for port, ips := range portIPsMap {
+		newIPs, err := c.setupConnection(port, ips)
+		if err != nil {
+			c.log.Errorw("Fail to setup connection", "port", port, "ips", ips)
+			return nil, err
+		}
+
+		ipAddrs = append(ipAddrs, newIPs...)
+	}
+
+	return ipAddrs, nil
+}
+
 // ListenToEvents listens to a list of udp addresses on given network interface.
 // nolint:cyclop
 func (c *Client) ListenToEvents(ctx context.Context) error {
-	ipGroups, err := c.setupConnection()
+	ipGroups, err := c.setupConnections()
 	if err != nil {
 		c.log.Errorw("failed to setup ipv4 packet connection", "err", err)
 		return err
@@ -679,7 +723,7 @@ func (c *Client) ListenToEvents(ctx context.Context) error {
 		for {
 			select {
 			case <-ctx.Done():
-				c.conn.Close()
+				return
 			case data, ok := <-dataCh:
 				if !ok {
 					return
@@ -694,27 +738,29 @@ func (c *Client) ListenToEvents(ctx context.Context) error {
 	}()
 
 	// listen to event using ipv4 package
-	go func() {
-		for {
-			data := pool.Get()
+	for _, conn := range c.conns {
+		go func(conn *ipv4.PacketConn) {
+			for {
+				data := pool.Get()
 
-			res, err := readUDPMulticastPackage(c.conn, ipGroups, data)
-			if res == nil {
-				pool.Put(data)
-			}
-
-			if err != nil {
-				if isNetConnClosedErr(err) {
-					c.log.Infow("Connection closed", "error", err)
-					close(dataCh)
-					break
+				res, err := readUDPMulticastPackage(conn, ipGroups, data)
+				if res == nil {
+					pool.Put(data)
 				}
-				c.log.Errorw("Fail to read UDP multicast package", "error", err)
-			} else if res != nil {
-				dataCh <- res
+
+				if err != nil {
+					if isNetConnClosedErr(err) {
+						c.log.Infow("Connection closed", "error", err)
+						closeChannel(dataCh)
+						break
+					}
+					c.log.Errorw("Fail to read UDP multicast package", "error", err)
+				} else if res != nil {
+					dataCh <- res
+				}
 			}
-		}
-	}()
+		}(conn)
+	}
 
 	return nil
 }
@@ -764,4 +810,12 @@ func checkValidDstAddress(dest net.IP, groups []net.IP) bool {
 		}
 	}
 	return false
+}
+
+func closeChannel(ch chan []byte) {
+	defer func() {
+		_ = recover()
+	}()
+
+	close(ch)
 }
