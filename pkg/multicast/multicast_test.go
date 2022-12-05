@@ -129,17 +129,19 @@ func (ts *MulticastTestSuite) SetupSuite() {
 
 func testSetupConnections(c *Client, require *require.Assertions) {
 	mu := &sync.RWMutex{}
-	expectedIPGroups := []net.IP{
-		net.ParseIP("239.111.111.1"), net.ParseIP("239.111.111.2"), net.ParseIP("239.111.111.3"),
+	expected := map[int][]net.IP{
+		6100: {
+			net.ParseIP("239.111.111.1"), net.ParseIP("239.111.111.2"), net.ParseIP("239.111.111.3"),
+		},
 	}
 
 	mu.Lock()
-	ipGroups, err := c.setupConnections()
+	portIPsMap, err := c.setupConnections()
 	mu.Unlock()
 	require.NoError(err)
 
 	mu.Lock()
-	require.Equal(ipGroups, expectedIPGroups)
+	require.Equal(portIPsMap, expected)
 	mu.Unlock()
 }
 
@@ -1130,7 +1132,7 @@ func (ts *MulticastTestSuite) TestListenToEvents() {
 
 	group := net.ParseIP("239.111.111.1")
 	dst := &net.UDPAddr{IP: group, Port: 6100}
-	_ = ts.c.conns[0].SetMulticastInterface(ts.c.inf)
+	_ = ts.c.connMap[6100][0].SetMulticastInterface(ts.c.inf)
 
 	numEvent := 0
 	ts.c.On("snapshot.BTC-PERPETUAL", func(b *models.OrderBookRawNotification) {
@@ -9474,7 +9476,7 @@ func (ts *MulticastTestSuite) TestListenToEvents() {
 		byteData, err := base64.StdEncoding.DecodeString(s)
 		require.NoError(err)
 
-		_, err = ts.c.conns[0].WriteTo(byteData, nil, dst)
+		_, err = ts.c.connMap[6100][0].WriteTo(byteData, nil, dst)
 		require.NoError(err)
 	}
 
