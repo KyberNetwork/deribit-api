@@ -52,7 +52,7 @@ type Client struct {
 	log               *zap.SugaredLogger
 	inf               *net.Interface
 	addrs             []string
-	connMap           map[int][]*ipv4.PacketConn // port: packetConnection
+	connMap           map[int]*ipv4.PacketConn // port: packetConnection
 	instrumentsGetter InstrumentsGetter
 
 	supportCurrencies []string
@@ -501,10 +501,8 @@ func (c *Client) restartConnections(ctx context.Context) error {
 
 // Stop stops listening for events.
 func (c *Client) Stop() error {
-	for _, connList := range c.connMap {
-		for _, conn := range connList {
-			conn.Close()
-		}
+	for _, conn := range c.connMap {
+		conn.Close()
 	}
 
 	c.connMap = nil
@@ -638,12 +636,11 @@ func (c *Client) setupConnection(port int, ips []string) ([]net.IP, error) {
 		return nil, err
 	}
 
-	newConn := ipv4.NewPacketConn(conn)
-	c.connMap[port] = append(c.connMap[port], newConn)
+	c.connMap[port] = ipv4.NewPacketConn(conn)
 
 	ipGroups := make([]net.IP, len(ips))
 
-	err = newConn.SetControlMessage(ipv4.FlagDst, true)
+	err = c.connMap[port].SetControlMessage(ipv4.FlagDst, true)
 	if err != nil {
 		c.log.Errorw("Failed to set control message", "err", err)
 		return nil, err
@@ -654,7 +651,7 @@ func (c *Client) setupConnection(port int, ips []string) ([]net.IP, error) {
 		if group == nil {
 			return nil, ErrInvalidIpv4Address
 		}
-		err := newConn.JoinGroup(c.inf, &net.UDPAddr{IP: group})
+		err := c.connMap[port].JoinGroup(c.inf, &net.UDPAddr{IP: group})
 		if err != nil {
 			c.log.Errorw("failed to join group", "group", group, "err", err, "ip", ip)
 			return nil, err
@@ -680,7 +677,7 @@ func splitAddr(addr string) (string, int, error) {
 }
 
 func (c *Client) setupConnections() (map[int][]net.IP, error) {
-	c.connMap = make(map[int][]*ipv4.PacketConn)
+	c.connMap = make(map[int]*ipv4.PacketConn)
 
 	portIPsMap := make(map[int][]string)
 	for _, addr := range c.addrs {
@@ -745,30 +742,28 @@ func (c *Client) ListenToEvents(ctx context.Context) error {
 	}()
 
 	// listen to event using ipv4 package
-	for port, connList := range c.connMap {
-		for _, conn := range connList {
-			go func(conn *ipv4.PacketConn) {
-				for {
-					data := pool.Get()
+	for port, conn := range c.connMap {
+		go func(conn *ipv4.PacketConn, ips []net.IP) {
+			for {
+				data := pool.Get()
 
-					res, err := readUDPMulticastPackage(conn, portIPsMap[port], data)
-					if res == nil {
-						pool.Put(data)
-					}
-
-					if err != nil {
-						if isNetConnClosedErr(err) {
-							c.log.Infow("Connection closed", "error", err)
-							closeChannel(dataCh)
-							break
-						}
-						c.log.Errorw("Fail to read UDP multicast package", "error", err)
-					} else if res != nil {
-						dataCh <- res
-					}
+				res, err := readUDPMulticastPackage(conn, ips, data)
+				if res == nil {
+					pool.Put(data)
 				}
-			}(conn)
-		}
+
+				if err != nil {
+					if isNetConnClosedErr(err) {
+						c.log.Infow("Connection closed", "error", err)
+						closeChannel(dataCh)
+						break
+					}
+					c.log.Errorw("Fail to read UDP multicast package", "error", err)
+				} else if res != nil {
+					dataCh <- res
+				}
+			}
+		}(conn, portIPsMap[port])
 	}
 
 	return nil
