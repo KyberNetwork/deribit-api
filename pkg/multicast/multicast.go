@@ -128,10 +128,9 @@ func getAllInstrument(
 // decodeEvents decodes a UDP package into a list of events.
 func (c *Client) decodeEvents(
 	marshaler *sbe.SbeGoMarshaller, reader io.Reader,
+	bookChangesMap map[string][]sbe.BookChangesList,
+	snapshotLevelsMap map[string][]sbe.SnapshotLevelsList,
 ) (events []Event, err error) {
-	bookChangesMap := make(map[string][]sbe.BookChangesList)
-	snapshotLevelsMap := make(map[string][]sbe.SnapshotLevelsList)
-
 	// Decode Sbe messages
 	for {
 		// Decode message header.
@@ -567,6 +566,8 @@ func (c *Client) Handle(
 	marshaler *sbe.SbeGoMarshaller,
 	reader io.Reader,
 	chanelIDSeq map[uint16]uint32,
+	bookChangesMap map[string][]sbe.BookChangesList,
+	snapshotLevelsMap map[string][]sbe.SnapshotLevelsList,
 ) error {
 	err := c.handlePackageHeader(reader, chanelIDSeq)
 	if err != nil {
@@ -577,7 +578,7 @@ func (c *Client) Handle(
 		return err
 	}
 
-	events, err := c.decodeEvents(marshaler, reader)
+	events, err := c.decodeEvents(marshaler, reader, bookChangesMap, snapshotLevelsMap)
 	if err != nil {
 		c.log.Errorw("failed to decode events", "err", err)
 		return err
@@ -720,6 +721,8 @@ func (c *Client) ListenToEvents(ctx context.Context) error {
 	go func() {
 		m := sbe.NewSbeGoMarshaller()
 		channelIDSeq := make(map[uint16]uint32)
+		bookChangesMap := make(map[string][]sbe.BookChangesList)
+		snapshotLevelsMap := make(map[string][]sbe.SnapshotLevelsList)
 		for {
 			select {
 			case <-ctx.Done():
@@ -728,7 +731,7 @@ func (c *Client) ListenToEvents(ctx context.Context) error {
 				if !ok {
 					return
 				}
-				err := c.handleUDPPackage(ctx, m, channelIDSeq, data)
+				err := c.handleUDPPackage(ctx, m, channelIDSeq, data, bookChangesMap, snapshotLevelsMap)
 				if err != nil {
 					c.log.Errorw("Fail to handle UDP package", "error", err)
 				}
@@ -770,9 +773,11 @@ func (c *Client) handleUDPPackage(
 	m *sbe.SbeGoMarshaller,
 	channelIDSeq map[uint16]uint32,
 	data []byte,
+	bookChangesMap map[string][]sbe.BookChangesList,
+	snapshotLevelsMap map[string][]sbe.SnapshotLevelsList,
 ) error {
 	buf := bytes.NewBuffer(data)
-	err := c.Handle(m, buf, channelIDSeq)
+	err := c.Handle(m, buf, channelIDSeq, bookChangesMap, snapshotLevelsMap)
 	if err != nil {
 		if errors.Is(err, ErrConnectionReset) {
 			if err = c.restartConnections(ctx); err != nil {
