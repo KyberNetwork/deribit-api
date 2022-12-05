@@ -700,7 +700,7 @@ func (c *Client) setupConnections() (map[int][]net.IP, error) {
 			return nil, err
 		}
 
-		portNetIPsMap[port] = append(portNetIPsMap[port], newIPs...)
+		portNetIPsMap[port] = newIPs
 	}
 
 	return portNetIPsMap, nil
