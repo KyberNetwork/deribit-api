@@ -197,7 +197,7 @@ func (c *Client) decodeInstrumentEvent(
 		MakerCommission:      ins.MakerCommission,
 		Leverage:             int(ins.MaxLeverage),
 		Kind:                 ins.Kind.String(),
-		IsActive:             ins.InstrumentState.IsActive(),
+		IsActive:             ins.IsActive(),
 		InstrumentID:         ins.InstrumentId,
 		InstrumentName:       string(ins.InstrumentName),
 		ExpirationTimestamp:  ins.ExpirationTimestampMs,

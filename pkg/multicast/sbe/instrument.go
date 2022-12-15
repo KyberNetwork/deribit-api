@@ -5,6 +5,7 @@ import (
 	"io"
 	"io/ioutil"
 	"math"
+	"time"
 )
 
 type Instrument struct {
@@ -422,4 +423,8 @@ func (*Instrument) MaxLeverageMinValue() float64 {
 
 func (*Instrument) MaxLeverageMaxValue() float64 {
 	return math.MaxFloat64
+}
+
+func (i *Instrument) IsActive() bool {
+	return i.InstrumentState.IsActive() && i.ExpirationTimestampMs > uint64(time.Now().UnixMilli())
 }
