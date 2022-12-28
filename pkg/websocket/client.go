@@ -242,9 +242,11 @@ func (c *Client) heartbeat() {
 	for {
 		select {
 		case <-t.C:
-			if _, err := c.Test(context.Background()); err != nil {
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			if _, err := c.Test(ctx); err != nil {
 				logger.Errorw("error test server", "err", err)
 			}
+			cancel()
 		case <-c.heartCancel:
 			logger.Info("cancel heartbeat check")
 			return
