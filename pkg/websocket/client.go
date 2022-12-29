@@ -242,9 +242,14 @@ func (c *Client) heartbeat() {
 	for {
 		select {
 		case <-t.C:
-			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			if _, err := c.Test(ctx); err != nil {
 				logger.Errorw("error test server", "err", err)
+				if errors.Is(context.DeadlineExceeded, err) {
+					logger.Info("Connection timeout, restarting connection...")
+					c.RestartConnection()
+				}
+
 			}
 			cancel()
 		case <-c.heartCancel:
