@@ -249,7 +249,6 @@ func (c *Client) heartbeat() {
 					logger.Info("Connection timeout, restarting connection...")
 					c.RestartConnection()
 				}
-
 			}
 			cancel()
 		case <-c.heartCancel:
