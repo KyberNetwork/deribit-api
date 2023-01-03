@@ -216,6 +216,7 @@ func (c *Client) Handle(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.
 
 // ResetConnection force reconnect
 func (c *Client) ResetConnection() {
+	c.setIsConnected(false)
 	_ = c.rpcConn.Close()
 }
 
@@ -238,21 +239,27 @@ func (c *Client) Stop() {
 func (c *Client) heartbeat() {
 	logger := c.l.With("func", "heartbeat")
 	logger.Info("starting heartbeat check...")
+	defer logger.Info("stop heartbeat check")
+
 	t := time.NewTicker(5 * time.Second)
+	defer t.Stop()
+
 	for {
 		select {
 		case <-t.C:
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			if _, err := c.Test(ctx); err != nil {
+			_, err := c.Test(ctx)
+			cancel()
+			if err != nil {
 				logger.Errorw("error test server", "err", err)
 				if errors.Is(context.DeadlineExceeded, err) {
 					logger.Info("Connection timeout, restarting connection...")
 					c.RestartConnection()
+					return
 				}
 			}
 			cancel()
 		case <-c.heartCancel:
-			logger.Info("cancel heartbeat check")
 			return
 		}
 	}
@@ -275,6 +282,7 @@ func (c *Client) reconnect() {
 }
 
 func (c *Client) RestartConnection() {
+	c.setIsConnected(false)
 	c.tryCloseCh(c.restartCh, "restartCh")
 }
 
