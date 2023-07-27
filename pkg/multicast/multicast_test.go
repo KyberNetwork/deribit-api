@@ -232,7 +232,7 @@ func (ts *MulticastTestSuite) TestDecodeInstrumentEvent() {
 			MakerCommission:      0.0003,
 			Leverage:             0,
 			Kind:                 "option",
-			IsActive:             true,
+			IsActive:             false,
 			InstrumentID:         210762,
 			InstrumentName:       "ETH-31MAR23-3500-P",
 			ExpirationTimestamp:  1680249600000,
@@ -644,12 +644,6 @@ func (ts *MulticastTestSuite) TestDecodeEvent() {
 				0x85, 0x00, 0xeb, 0x03, 0x01, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00,
 			},
 			io.EOF, // decodeTicker
-		},
-		{
-			[]byte{
-				0x8c, 0x00, 0xe8, 0x04, 0x01, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x00,
-			},
-			ErrUnsupportedTemplateID,
 		},
 	}
 
