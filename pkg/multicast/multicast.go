@@ -3,9 +3,11 @@ package multicast
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"math"
 	"net"
 	"strconv"
@@ -127,7 +129,7 @@ func getAllInstrument(
 
 // decodeEvents decodes a UDP package into a list of events.
 func (c *Client) decodeEvents(
-	marshaler *sbe.SbeGoMarshaller, reader io.Reader,
+	marshaller *sbe.SbeGoMarshaller, reader io.Reader,
 	bookChangesMap map[string][]sbe.BookChangesList,
 	snapshotLevelsMap map[string][]sbe.SnapshotLevelsList,
 ) (events []Event, err error) {
@@ -135,16 +137,21 @@ func (c *Client) decodeEvents(
 	for {
 		// Decode message header.
 		var header sbe.MessageHeader
-		err = header.Decode(marshaler, reader)
+		err = header.Decode(marshaller, reader)
 		if err != nil {
 			if errors.Is(err, io.EOF) {
 				err = nil
 			}
 			return
 		}
-		event, err := c.decodeEvent(marshaler, reader, header, bookChangesMap, snapshotLevelsMap)
+
+		event, err := c.decodeEvent(marshaller, reader, header, bookChangesMap, snapshotLevelsMap)
 		if err != nil {
 			if errors.Is(err, ErrEventWithoutIsLast) {
+				continue
+			}
+			if errors.Is(err, ErrUnsupportedTemplateID) {
+				c.log.Debugw("Ignore unsupported event", "error", err)
 				continue
 			}
 			return nil, err
@@ -154,7 +161,7 @@ func (c *Client) decodeEvents(
 }
 
 func (c *Client) decodeEvent(
-	marshaler *sbe.SbeGoMarshaller,
+	marshaller *sbe.SbeGoMarshaller,
 	reader io.Reader,
 	header sbe.MessageHeader,
 	bookChangesMap map[string][]sbe.BookChangesList,
@@ -162,27 +169,31 @@ func (c *Client) decodeEvent(
 ) (Event, error) {
 	switch header.TemplateId {
 	case 1000:
-		return c.decodeInstrumentEvent(marshaler, reader, header)
+		return c.decodeInstrumentEvent(marshaller, reader, header)
 	case 1001:
-		return c.decodeOrderBookEvent(marshaler, reader, header, bookChangesMap)
+		return c.decodeOrderBookEvent(marshaller, reader, header, bookChangesMap)
 	case 1002:
-		return c.decodeTradesEvent(marshaler, reader, header)
+		return c.decodeTradesEvent(marshaller, reader, header)
 	case 1003:
-		return c.decodeTickerEvent(marshaler, reader, header)
+		return c.decodeTickerEvent(marshaller, reader, header)
 	case 1004:
-		return c.decodeSnapshotEvent(marshaler, reader, header, snapshotLevelsMap)
+		return c.decodeSnapshotEvent(marshaller, reader, header, snapshotLevelsMap)
 	default:
+		err := decodeUnsupportedEvent(marshaller, reader, header)
+		if err != nil {
+			return Event{}, err
+		}
 		return Event{}, fmt.Errorf("%w, templateId: %d", ErrUnsupportedTemplateID, header.TemplateId)
 	}
 }
 
 func (c *Client) decodeInstrumentEvent(
-	marshaler *sbe.SbeGoMarshaller,
+	marshaller *sbe.SbeGoMarshaller,
 	reader io.Reader,
 	header sbe.MessageHeader,
 ) (Event, error) {
 	var ins sbe.Instrument
-	err := ins.Decode(marshaler, reader, header.BlockLength, true)
+	err := ins.Decode(marshaller, reader, header.BlockLength, true)
 	if err != nil {
 		c.log.Errorw("failed to decode instrument event", "err", err)
 		return Event{}, err
@@ -215,15 +226,15 @@ func (c *Client) decodeInstrumentEvent(
 	}, nil
 }
 
-// nolint:dupl
+//nolint:dupl
 func (c *Client) decodeOrderBookEvent(
-	marshaler *sbe.SbeGoMarshaller,
+	marshaller *sbe.SbeGoMarshaller,
 	reader io.Reader,
 	header sbe.MessageHeader,
 	bookChangesMap map[string][]sbe.BookChangesList,
 ) (Event, error) {
 	var book sbe.Book
-	err := book.Decode(marshaler, reader, header.BlockLength, true)
+	err := book.Decode(marshaller, reader, header.BlockLength, true)
 	if err != nil {
 		c.log.Errorw("failed to decode orderbook event", "err", err)
 		return Event{}, err
@@ -287,12 +298,12 @@ func parseSbeBookToEvent(
 }
 
 func (c *Client) decodeTradesEvent(
-	marshaler *sbe.SbeGoMarshaller,
+	marshaller *sbe.SbeGoMarshaller,
 	reader io.Reader,
 	header sbe.MessageHeader,
 ) (Event, error) {
 	var trades sbe.Trades
-	err := trades.Decode(marshaler, reader, header.BlockLength, true)
+	err := trades.Decode(marshaller, reader, header.BlockLength, true)
 	if err != nil {
 		c.log.Errorw("failed to decode trades event", "err", err)
 		return Event{}, err
@@ -327,12 +338,12 @@ func (c *Client) decodeTradesEvent(
 }
 
 func (c *Client) decodeTickerEvent(
-	marshaler *sbe.SbeGoMarshaller,
+	marshaller *sbe.SbeGoMarshaller,
 	reader io.Reader,
 	header sbe.MessageHeader,
 ) (Event, error) {
 	var ticker sbe.Ticker
-	err := ticker.Decode(marshaler, reader, header.BlockLength, true)
+	err := ticker.Decode(marshaller, reader, header.BlockLength, true)
 	if err != nil {
 		c.log.Errorw("failed to decode ticker event", "err", err)
 		return Event{}, err
@@ -366,15 +377,15 @@ func (c *Client) decodeTickerEvent(
 	}, nil
 }
 
-// nolint:dupl
+//nolint:dupl
 func (c *Client) decodeSnapshotEvent(
-	marshaler *sbe.SbeGoMarshaller,
+	marshaller *sbe.SbeGoMarshaller,
 	reader io.Reader,
 	header sbe.MessageHeader,
 	snapshotLevelsMap map[string][]sbe.SnapshotLevelsList,
 ) (Event, error) {
 	var snapshot sbe.Snapshot
-	err := snapshot.Decode(marshaler, reader, header.BlockLength, true)
+	err := snapshot.Decode(marshaller, reader, header.BlockLength, true)
 	if err != nil {
 		c.log.Errorw("failed to decode snapshot event", "err", err)
 		return Event{}, err
@@ -398,6 +409,99 @@ func (c *Client) decodeSnapshotEvent(
 	}
 
 	return parseSbeSnapshotToEvent(instrumentName, snapshot, snapshotLevelsMap, key), nil
+}
+
+func discardVars(_m *sbe.SbeGoMarshaller, r io.Reader, numVars uint16) error {
+	for i := 0; i < int(numVars); i++ {
+		var length uint8
+		if err := _m.ReadUint8(r, &length); err != nil {
+			return err
+		}
+
+		_, _ = io.CopyN(ioutil.Discard, r, int64(length))
+	}
+
+	return nil
+}
+
+func discardGroup(_m *sbe.SbeGoMarshaller, r io.Reader) error {
+	// Read group header.
+	var blockLength uint16
+	if err := _m.ReadUint16(r, &blockLength); err != nil {
+		return err
+	}
+
+	var numInGroups uint16
+	if err := _m.ReadUint16(r, &numInGroups); err != nil {
+		return err
+	}
+
+	var numGroups uint16
+	if err := _m.ReadUint16(r, &numGroups); err != nil {
+		return err
+	}
+
+	var numVars uint16
+	if err := _m.ReadUint16(r, &numVars); err != nil {
+		return err
+	}
+
+	// Discard group's fixed length data.
+	_, _ = io.CopyN(ioutil.Discard, r, int64(numInGroups*blockLength))
+
+	// Discard sub-groups.
+	if numGroups > 0 {
+		if err := discardGroups(_m, r, numGroups); err != nil {
+			return err
+		}
+	}
+
+	// Discard variable fields.
+	if numVars > 0 {
+		if err := discardVars(_m, r, numVars); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func discardGroups(_m *sbe.SbeGoMarshaller, r io.Reader, numGroups uint16) error {
+	for i := uint16(0); i < numGroups; i++ {
+		err := discardGroup(_m, r)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func decodeUnsupportedEvent(
+	_m *sbe.SbeGoMarshaller,
+	r io.Reader,
+	header sbe.MessageHeader,
+) error {
+	// Discard bytes from fixed fields.
+	_, _ = io.CopyN(ioutil.Discard, r, int64(header.BlockLength))
+
+	// Decode and discard groups.
+	if header.NumGroups > 0 {
+		err := discardGroups(_m, r, header.NumGroups)
+		if err != nil {
+			return err
+		}
+	}
+
+	// Decode and discard variable length fields.
+	if header.NumVarDataFields > 0 {
+		err := discardVars(_m, r, header.NumVarDataFields)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 func parseSbeSnapshotToEvent(
@@ -563,7 +667,7 @@ func (c *Client) handlePackageHeader(reader io.Reader, chanelIDSeq map[uint16]ui
 // And needs to handle for connection reset, the sequence number is zero.
 // Note that the sequence number go from max(uint32) to zero is a normal event, not a connection reset.
 func (c *Client) Handle(
-	marshaler *sbe.SbeGoMarshaller,
+	marshaller *sbe.SbeGoMarshaller,
 	reader io.Reader,
 	chanelIDSeq map[uint16]uint32,
 	bookChangesMap map[string][]sbe.BookChangesList,
@@ -578,7 +682,7 @@ func (c *Client) Handle(
 		return err
 	}
 
-	events, err := c.decodeEvents(marshaler, reader, bookChangesMap, snapshotLevelsMap)
+	events, err := c.decodeEvents(marshaller, reader, bookChangesMap, snapshotLevelsMap)
 	if err != nil {
 		c.log.Errorw("failed to decode events", "err", err)
 		return err
@@ -707,7 +811,8 @@ func (c *Client) setupConnections() (map[int][]net.IP, error) {
 }
 
 // ListenToEvents listens to a list of udp addresses on given network interface.
-// nolint:cyclop,gocognit
+//
+//nolint:cyclop,gocognit
 func (c *Client) ListenToEvents(ctx context.Context) error {
 	portIPsMap, err := c.setupConnections()
 	if err != nil {
@@ -786,7 +891,11 @@ func (c *Client) handleUDPPackage(
 				return err
 			}
 		} else {
-			c.log.Errorw("Fail to handle UDP package", "error", err)
+			c.log.Errorw(
+				"Fail to handle UDP package",
+				"data", base64.StdEncoding.EncodeToString(data[8:]),
+				"error", err,
+			)
 			return err
 		}
 	}
