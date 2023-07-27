@@ -891,12 +891,11 @@ func (c *Client) handleUDPPackage(
 				return err
 			}
 		} else {
-			var dataBase64 string
-			if len(data) > 8 {
-				dataBase64 = base64.StdEncoding.EncodeToString(data[8:])
-			}
-
-			c.log.Errorw("Fail to handle UDP package", "data", dataBase64, "error", err)
+			c.log.Errorw(
+				"Fail to handle UDP package",
+				"data", base64.StdEncoding.EncodeToString(data),
+				"error", err,
+			)
 			return err
 		}
 	}
