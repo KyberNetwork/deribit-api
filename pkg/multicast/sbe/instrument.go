@@ -278,7 +278,7 @@ func (i *Instrument) RangeCheck() error {
 }
 
 func (*Instrument) SbeBlockLength() (blockLength uint16) {
-	return 152 // Length of fixed fields include header
+	return 140
 }
 
 func (*Instrument) InstrumentIdMinValue() uint32 {

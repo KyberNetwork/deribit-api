@@ -152,7 +152,7 @@ func (b *BookChangesList) RangeCheck() error {
 }
 
 func (*Book) SbeBlockLength() (blockLength uint16) {
-	return 41 // Length of fixed fields include header
+	return 29
 }
 
 func (*Book) InstrumentIdMinValue() uint32 {

@@ -197,7 +197,7 @@ func (t *TradesTradesList) RangeCheck() error {
 }
 
 func (*Trades) SbeBlockLength() (blockLength uint16) {
-	return 16
+	return 4
 }
 
 func (*Trades) InstrumentIdMinValue() uint32 {

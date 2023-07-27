@@ -189,7 +189,7 @@ func (t *Ticker) RangeCheck() error {
 }
 
 func (*Ticker) SbeBlockLength() (blockLength uint16) {
-	return 145
+	return 133
 }
 
 func (*Ticker) InstrumentIdMinValue() uint32 {

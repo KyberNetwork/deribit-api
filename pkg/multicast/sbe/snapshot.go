@@ -139,7 +139,7 @@ func (s *SnapshotLevelsList) RangeCheck() error {
 }
 
 func (*Snapshot) SbeBlockLength() (blockLength uint16) {
-	return 34
+	return 22
 }
 
 func (*Snapshot) InstrumentIdMinValue() uint32 {
