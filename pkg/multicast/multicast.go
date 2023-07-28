@@ -178,6 +178,8 @@ func (c *Client) decodeEvent(
 		return c.decodeTickerEvent(marshaller, reader, header)
 	case 1004:
 		return c.decodeSnapshotEvent(marshaller, reader, header, snapshotLevelsMap)
+	case 1010:
+		return c.decodeInstrumentV2Event(marshaller, reader, header)
 	default:
 		err := decodeUnsupportedEvent(marshaller, reader, header)
 		if err != nil {
@@ -218,6 +220,54 @@ func (c *Client) decodeInstrumentEvent(
 		BlockTradeCommission: ins.BlockTradeCommission,
 		OptionType:           ins.OptionType.String(),
 		Strike:               ins.StrikePrice,
+	}
+
+	return Event{
+		Type: EventTypeInstrument,
+		Data: instrument,
+	}, nil
+}
+
+func (c *Client) decodeInstrumentV2Event(
+	marshaller *sbe.SbeGoMarshaller,
+	reader io.Reader,
+	header sbe.MessageHeader,
+) (Event, error) {
+	var ins sbe.InstrumentV2
+	err := ins.Decode(marshaller, reader, header.BlockLength, true)
+	if err != nil {
+		c.log.Errorw("failed to decode instrument event", "err", err)
+		return Event{}, err
+	}
+
+	tickSizeSteps := make([]models.TickSizeStep, 0, len(ins.TickStepsList))
+	for _, step := range ins.TickStepsList {
+		tickSizeSteps = append(tickSizeSteps, models.TickSizeStep{
+			AbovePrice: step.AbovePrice,
+			TickSize:   step.TickSize,
+		})
+	}
+
+	instrument := models.Instrument{
+		TickSize:             ins.TickSize,
+		TakerCommission:      ins.TakerCommission,
+		SettlementPeriod:     ins.SettlementPeriod.String(),
+		QuoteCurrency:        getCurrencyFromBytesArray(ins.QuoteCurrency),
+		MinTradeAmount:       ins.MinTradeAmount,
+		MakerCommission:      ins.MakerCommission,
+		Leverage:             int(ins.MaxLeverage),
+		Kind:                 ins.Kind.String(),
+		IsActive:             ins.IsActive(),
+		InstrumentID:         ins.InstrumentId,
+		InstrumentName:       string(ins.InstrumentName),
+		ExpirationTimestamp:  ins.ExpirationTimestampMs,
+		CreationTimestamp:    ins.CreationTimestampMs,
+		ContractSize:         ins.ContractSize,
+		BaseCurrency:         getCurrencyFromBytesArray(ins.BaseCurrency),
+		BlockTradeCommission: ins.BlockTradeCommission,
+		OptionType:           ins.OptionType.String(),
+		Strike:               ins.StrikePrice,
+		TickSizeSteps:        tickSizeSteps,
 	}
 
 	return Event{
